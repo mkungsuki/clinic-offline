@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="650" viewBox="0 0 1200 650">
+  <defs>
+    <linearGradient id="top" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#f9fbfd"/>
+      <stop offset="1" stop-color="#e7eef5"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#153746" flood-opacity=".18"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="650" fill="#eef4f7"/>
+  <rect x="60" y="45" width="1080" height="550" rx="14" fill="#fff" filter="url(#shadow)"/>
+  <rect x="60" y="45" width="1080" height="96" rx="14" fill="url(#top)"/>
+  <path d="M60 126h1080" stroke="#c4d0da"/>
+  <text x="105" y="92" font-family="Leelawadee UI,Segoe UI,sans-serif" font-size="30" font-weight="700" fill="#244553">ส่งไปเครื่องหมอ</text>
+  <text x="105" y="122" font-family="Leelawadee UI,Segoe UI,sans-serif" font-size="18" fill="#637984">ต้องเห็น 4 ไฟล์นี้ ชื่อไม่ขาดและไม่มีไฟล์ฐานข้อมูลคนไข้</text>
+
+  <g font-family="Leelawadee UI,Segoe UI,sans-serif">
+    <g transform="translate(105 190)">
+      <rect width="455" height="120" rx="12" fill="#f6fbfc" stroke="#a9c9cf" stroke-width="2"/>
+      <rect x="24" y="25" width="62" height="72" rx="5" fill="#d6edf0" stroke="#5b9aa4"/>
+      <path d="M71 25v20h15" fill="none" stroke="#5b9aa4" stroke-width="3"/>
+      <text x="110" y="57" font-size="24" font-weight="700" fill="#183f49">clinic.cer</text>
+      <text x="110" y="87" font-size="18" fill="#58727c">ใบรับรองสาธารณะ</text>
+    </g>
+    <g transform="translate(640 190)">
+      <rect width="455" height="120" rx="12" fill="#f6fbfc" stroke="#a9c9cf" stroke-width="2"/>
+      <circle cx="56" cy="60" r="35" fill="#dceaf7" stroke="#638ab0"/>
+      <path d="M39 60l11 11 24-27" fill="none" stroke="#2a6f97" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="110" y="52" font-size="22" font-weight="700" fill="#183f49">ติดตั้งใบรับรอง</text>
+      <text x="110" y="82" font-size="20" font-weight="700" fill="#183f49">(เครื่องห้องตรวจ)</text>
+      <text x="110" y="107" font-size="16" fill="#58727c">ดับเบิลคลิกไฟล์นี้ก่อน</text>
+    </g>
+    <g transform="translate(105 350)">
+      <rect width="455" height="120" rx="12" fill="#f6fbfc" stroke="#a9c9cf" stroke-width="2"/>
+      <circle cx="56" cy="60" r="35" fill="#dff3e7" stroke="#63a77b"/>
+      <path d="M48 42l25 18-25 18z" fill="#2f8b55"/>
+      <text x="110" y="52" font-size="22" font-weight="700" fill="#183f49">เปิดระบบคลินิก</text>
+      <text x="110" y="82" font-size="20" font-weight="700" fill="#183f49">(ห้องหมอ)</text>
+      <text x="110" y="107" font-size="16" fill="#58727c">เปิดหลังติดตั้งใบรับรองแล้ว</text>
+    </g>
+    <g transform="translate(640 350)">
+      <rect width="455" height="120" rx="12" fill="#f6fbfc" stroke="#a9c9cf" stroke-width="2"/>
+      <rect x="24" y="25" width="62" height="72" rx="5" fill="#fff2c8" stroke="#b99328"/>
+      <path d="M38 46h34M38 61h34M38 76h26" stroke="#8b6c18" stroke-width="4" stroke-linecap="round"/>
+      <text x="110" y="57" font-size="24" font-weight="700" fill="#183f49">อ่านก่อนเปิด</text>
+      <text x="110" y="87" font-size="18" fill="#58727c">คำแนะนำสั้นสำหรับเครื่องหมอ</text>
+    </g>
+  </g>
+  <rect x="105" y="505" width="990" height="55" rx="10" fill="#fff4c8" stroke="#d5a516"/>
+  <text x="600" y="540" text-anchor="middle" font-family="Leelawadee UI,Segoe UI,sans-serif" font-size="20" font-weight="700" fill="#6e5710">ภาพสรุปชื่อไฟล์ — หน้าตาไอคอนอาจต่างกันเล็กน้อยตาม Windows</text>
+</svg>

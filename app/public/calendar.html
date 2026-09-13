@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>นัดหมาย</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  .cols { grid-template-columns: 1fr 400px; max-width: 1200px; margin: 0 auto; }
+  @media (max-width: 1000px) { .cols { grid-template-columns: 1fr; } }
+  .cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .cal-head b { font-size: 19px; }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .cal-dow { text-align: center; font-size: 12.5px; color: var(--dim); font-weight: 700; padding: 4px 0; }
+  .cal-cell { border: 1px solid var(--line); border-radius: 8px; min-height: 74px; padding: 6px;
+    background: var(--card); cursor: pointer; position: relative; }
+  .cal-cell:hover { background: var(--blue-soft); }
+  .cal-cell.empty { background: transparent; border: none; cursor: default; }
+  .cal-cell.today { outline: 2px solid var(--blue); }
+  .cal-cell.sel { background: var(--blue-soft); border-color: var(--blue); }
+  .cal-cell .d { font-weight: 700; }
+  .cal-cell.past { opacity: .45; }
+  .cal-count { position: absolute; bottom: 6px; right: 6px; background: var(--blue); color: #fff;
+    border-radius: 999px; min-width: 26px; height: 26px; display: flex; align-items: center;
+    justify-content: center; font-size: 13.5px; font-weight: 700; padding: 0 6px; }
+  .appt-item { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--card); }
+  .appt-item .nm { font-weight: 700; }
+  .appt-item .sub { font-size: 13px; color: var(--dim); }
+</style>
+</head>
+<body>
+<div id="backupBanner"></div>
+<div class="cols" style="padding:12px">
+  <div class="card">
+    <div class="cal-head">
+      <button class="btn" onclick="moveMonth(-1)">← เดือนก่อน</button>
+      <b id="calTitle"></b>
+      <button class="btn" onclick="moveMonth(1)">เดือนถัดไป →</button>
+    </div>
+    <div class="cal-grid" id="calGrid"></div>
+    <p class="muted mt">ตัวเลขในวงกลม = จำนวนคนไข้นัดวันนั้น · กดวันเพื่อดูรายชื่อ</p>
+  </div>
+  <div class="card">
+    <h2 id="dayTitle">เลือกวันจากปฏิทิน</h2>
+    <div class="stack" id="dayList"></div>
+  </div>
+</div>
+
+<script src="/common.js"></script>
+<script>
+'use strict';
+const TH_M = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+  'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+let calYear, calMonth; // Gregorian, month 0-11
+let appts = [], selDate = null;
+
+function ymd(y, m, d) { return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
+function todayStr() { const t = new Date(); return ymd(t.getFullYear(), t.getMonth(), t.getDate()); }
+
+async function loadMonth() {
+  const ym = `${calYear}-${String(calMonth + 1).padStart(2, '0')}`;
+  appts = await api('GET', `/api/appointments?month=${ym}`);
+  renderCal();
+  if (selDate && selDate.startsWith(ym)) renderDay(selDate);
+}
+function moveMonth(dir) {
+  calMonth += dir;
+  if (calMonth < 0) { calMonth = 11; calYear--; }
+  if (calMonth > 11) { calMonth = 0; calYear++; }
+  selDate = null;
+  document.getElementById('dayTitle').textContent = 'เลือกวันจากปฏิทิน';
+  document.getElementById('dayList').innerHTML = '';
+  loadMonth();
+}
+function renderCal() {
+  document.getElementById('calTitle').textContent = `${TH_M[calMonth]} ${calYear + 543}`;
+  const grid = document.getElementById('calGrid');
+  const firstDow = new Date(calYear, calMonth, 1).getDay();
+  const daysIn = new Date(calYear, calMonth + 1, 0).getDate();
+  const today = todayStr();
+  const counts = {};
+  for (const a of appts) counts[a.appt_date] = (counts[a.appt_date] || 0) + 1;
+  let html = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'].map(d => `<div class="cal-dow">${d}</div>`).join('');
+  for (let i = 0; i < firstDow; i++) html += '<div class="cal-cell empty"></div>';
+  for (let d = 1; d <= daysIn; d++) {
+    const ds = ymd(calYear, calMonth, d);
+    const cls = ['cal-cell', ds === today ? 'today' : '', ds < today ? 'past' : '', ds === selDate ? 'sel' : ''].join(' ');
+    html += `<div class="${cls}" onclick="renderDay('${ds}')">
+      <span class="d">${d}</span>
+      ${counts[ds] ? `<span class="cal-count">${counts[ds]}</span>` : ''}</div>`;
+  }
+  grid.innerHTML = html;
+}
+function renderDay(ds) {
+  selDate = ds;
+  renderCal();
+  const list = appts.filter(a => a.appt_date === ds);
+  const [y, m, d] = ds.split('-');
+  document.getElementById('dayTitle').textContent =
+    `นัดวัน${Number(d)} ${TH_M[Number(m) - 1]} ${Number(y) + 543} (${list.length} คน)`;
+  document.getElementById('dayList').innerHTML = list.length ? list.map(a => `
+    <div class="appt-item">
+      <div class="nm">${esc(a.prefix || '')}${esc(a.first_name)} ${esc(a.last_name || '')}
+        <span class="muted">HN ${esc(a.hn)}</span></div>
+      <div class="sub">${a.phone ? '📞 ' + esc(a.phone) + ' · ' : ''}${a.chronic ? esc(a.chronic) + ' · ' : ''}นัดล่วงหน้า ${a.days} วัน</div>
+      ${a.note ? `<div class="sub">📝 ${esc(a.note)}</div>` : ''}
+      <div class="mt">
+        <button class="btn sm" onclick="rescheduleAppt(${a.id})">📅 เลื่อนนัด</button>
+        <button class="btn sm ghost-red" onclick="cancelAppt(${a.id})">ยกเลิกนัด</button></div>
+    </div>`).join('') : '<div class="muted">ไม่มีนัดวันนี้</div>';
+}
+// เลื่อนนัดจบในที่เดียว ไม่ต้องยกเลิกแล้วไปตั้งใหม่ที่คนไข้ (UAT D2)
+function rescheduleAppt(id) {
+  const a = appts.find(x => x.id === id);
+  if (!a) return;
+  openModal(`<h2>📅 เลื่อนนัด — ${esc(a.prefix || '')}${esc(a.first_name)} ${esc(a.last_name || '')}</h2>
+    <div class="muted">นัดเดิม: ${esc(a.appt_date)}${a.note ? ' · ' + esc(a.note) : ''}</div>
+    <label class="f" style="margin-top:8px"><span>วันนัดใหม่</span><input type="date" id="mNewDate"></label>
+    <label class="f"><span>หมายเหตุนัด (เว้นว่าง = ใช้ของเดิม)</span><input id="mNewNote" placeholder="${esc(a.note || '')}" style="width:100%"></label>
+    <div class="row" style="margin-top:12px">
+      <button class="btn primary" onclick="rescheduleConfirm(${id})">บันทึกวันนัดใหม่</button>
+      <button class="btn" onclick="closeModal()">ยกเลิก</button></div>`);
+  document.getElementById('mNewDate').focus();
+}
+function rescheduleConfirm(id) {
+  const date = document.getElementById('mNewDate').value;
+  if (!date) { toast('เลือกวันนัดใหม่ก่อน', true); return; }
+  const note = document.getElementById('mNewNote').value.trim();
+  api('PATCH', `/api/appointments/${id}`, { date, note: note || undefined })
+    .then(a => { closeModal(); toast(`เลื่อนนัดเป็น ${a.appt_date} แล้ว`); loadMonth(); })
+    .catch(e => toast(e.message, true));
+}
+function cancelAppt(id) {
+  openAsk({
+    title: 'ยกเลิกนัด',
+    intro: 'ถ้าคนไข้แค่ขอเลื่อน ใช้ปุ่ม "เลื่อนนัด" แทน — ไม่ต้องยกเลิก',
+    fields: [{ id: 'mReason', label: 'เหตุผล (บันทึกไว้ดูภายหลัง ไม่บังคับ)', placeholder: 'เช่น คนไข้ยกเลิกเอง' }],
+    okText: 'ยืนยันยกเลิกนัด',
+    onOk: () => {
+      api('POST', `/api/appointments/${id}/cancel`, {})
+        .then(() => { closeModal(); toast('ยกเลิกนัดแล้ว'); loadMonth(); })
+        .catch(e => toast(e.message, true));
+    },
+  });
+}
+initPage('calendar').then(me => {
+  if (!me) return;
+  const t = new Date();
+  calYear = t.getFullYear();
+  calMonth = t.getMonth();
+  loadMonth();
+});
+</script>
+</body>
+</html>

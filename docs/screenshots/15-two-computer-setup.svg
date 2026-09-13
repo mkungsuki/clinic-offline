@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1040" viewBox="0 0 1600 1040" role="img" aria-labelledby="title desc">
+  <title id="title">ลำดับการเชื่อมคอมพิวเตอร์ห้องตรวจ 4 ขั้น</title>
+  <desc id="desc">ขั้น 1–2 ทำที่เครื่องหน้าร้าน (กดปุ่มในหน้าตั้งค่า ทำตามกล่อง แล้วได้โฟลเดอร์ส่งไปเครื่องหมอ) ขั้น 3–4 ทำที่เครื่องห้องตรวจ (ถ้ามี SmartScreen ให้กด More info และ Run anyway จากนั้นติดตั้งใบรับรองครั้งเดียว แล้วเปิดทางลัด https และเข้าระบบ)</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e7f5f5"/><stop offset="1" stop-color="#f8fbfc"/></linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#183f47" flood-opacity=".16"/></filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#13828a"/></marker>
+    <style>
+      .h { font-family: 'Leelawadee UI', Tahoma, sans-serif; }
+      .num { font-family: 'Segoe UI', sans-serif; font-weight: 700; fill: #fff; font-size: 34px; }
+      .t1 { font-size: 30px; font-weight: 700; fill: #0b626b; }
+      .t2 { font-size: 22px; fill: #385d65; }
+      .t3 { font-size: 20px; fill: #19343d; }
+      .box { fill: #fff; stroke: #9bc8cc; stroke-width: 3; }
+      .win { fill: #fff; stroke: #7a8fa6; stroke-width: 2; }
+      .winbar { fill: #e9eef5; }
+      .btnY { fill: #1f6feb; }
+      .btnN { fill: #e6ebf1; stroke: #7a8fa6; stroke-width: 1.5; }
+      .lbl { font-size: 18px; fill: #19343d; }
+      .lblw { font-size: 18px; fill: #fff; font-weight: 700; }
+    </style>
+  </defs>
+  <rect width="1600" height="1040" rx="32" fill="url(#bg)"/>
+  <text x="800" y="70" text-anchor="middle" class="h" font-size="46" font-weight="700" fill="#0b626b">เชื่อมคอมพิวเตอร์ห้องตรวจ — ทำ 4 ขั้นตามลำดับ (ทำทีหลังได้ทุกเมื่อ)</text>
+  <text x="800" y="112" text-anchor="middle" class="h t2">ขั้น 1–2 ทำที่เครื่องหน้าร้าน (เครื่องที่ติดตั้งโปรแกรม)  ·  ขั้น 3–4 ทำที่เครื่องห้องตรวจ (ไม่ต้องติดตั้งโปรแกรม)</text>
+
+  <!-- แถวเครื่องหน้าร้าน -->
+  <rect x="60" y="150" width="1480" height="380" rx="26" fill="#f0f8f8" stroke="#bfe0e2" stroke-width="2"/>
+  <text x="90" y="192" class="h" font-size="26" font-weight="700" fill="#0d7078">🖥️ เครื่องหน้าร้าน</text>
+
+  <!-- ขั้น 1 -->
+  <g filter="url(#shadow)"><rect x="90" y="215" width="680" height="295" rx="22" class="box"/></g>
+  <circle cx="135" cy="262" r="30" fill="#0d7078"/><text x="135" y="274" text-anchor="middle" class="num">1</text>
+  <text x="180" y="272" class="h t1">กดปุ่มในหน้า “ตั้งค่า” → ทำตามกล่อง 3 กล่อง</text>
+  <!-- ปุ่มในการ์ด -->
+  <rect x="120" y="300" width="230" height="56" rx="10" fill="#1f6feb"/>
+  <text x="235" y="336" text-anchor="middle" class="h lblw" font-size="20">🔗 ตั้งค่าเครื่องห้องตรวจ</text>
+  <text x="235" y="382" text-anchor="middle" class="h t3">การ์ด “เครื่องห้องตรวจ” (เข้าด้วย admin)</text>
+  <path d="M355 328h40" stroke="#13828a" stroke-width="6" marker-end="url(#arrow)"/>
+  <!-- กล่อง 1: UAC -->
+  <rect x="405" y="292" width="110" height="82" rx="8" class="win"/><rect x="405" y="292" width="110" height="18" rx="8" class="winbar"/>
+  <text x="460" y="330" text-anchor="middle" class="h" font-size="14" fill="#19343d">Windows ถาม</text>
+  <rect x="425" y="342" width="70" height="22" rx="5" class="btnY"/><text x="460" y="358" text-anchor="middle" class="h" font-size="14" fill="#fff" font-weight="700">Yes</text>
+  <text x="460" y="392" text-anchor="middle" class="h" font-size="15" fill="#385d65">① อนุญาต</text>
+  <path d="M520 333h22" stroke="#13828a" stroke-width="5" marker-end="url(#arrow)"/>
+  <!-- กล่อง 2: Wi-Fi -->
+  <rect x="547" y="292" width="110" height="82" rx="8" class="win"/><rect x="547" y="292" width="110" height="18" rx="8" class="winbar"/>
+  <text x="602" y="330" text-anchor="middle" class="h" font-size="14" fill="#19343d">Wi-Fi ของคลินิก?</text>
+  <rect x="556" y="342" width="44" height="22" rx="5" class="btnY"/><text x="578" y="358" text-anchor="middle" class="h" font-size="13" fill="#fff" font-weight="700">Yes</text>
+  <rect x="606" y="342" width="44" height="22" rx="5" class="btnN"/><text x="628" y="358" text-anchor="middle" class="h" font-size="13" fill="#19343d">No</text>
+  <text x="602" y="392" text-anchor="middle" class="h" font-size="15" fill="#385d65">② Yes ถ้าใช่</text>
+  <path d="M662 333h22" stroke="#13828a" stroke-width="5" marker-end="url(#arrow)"/>
+  <!-- กล่อง 3: สำเร็จ -->
+  <rect x="689" y="292" width="72" height="82" rx="8" fill="#e8f7ec" stroke="#2ea043" stroke-width="2"/>
+  <text x="725" y="330" text-anchor="middle" class="h" font-size="22">✅</text>
+  <text x="725" y="358" text-anchor="middle" class="h" font-size="13" fill="#1a6b2c" font-weight="700">สำเร็จ</text>
+  <text x="725" y="392" text-anchor="middle" class="h" font-size="15" fill="#385d65">③ เสร็จ</text>
+  <text x="120" y="440" class="h" font-size="19" fill="#19343d">หน้าต่างโปรแกรมจะปิดแล้วเปิดใหม่เอง (รีสตาร์ทเพื่อโหลดใบรับรอง) — ปกติ</text>
+  <text x="120" y="470" class="h" font-size="19" fill="#19343d">หน้าเว็บจะเด้งไปหน้าเข้าระบบ (ปกติ) → เข้าระบบใหม่ จะกลับมาหน้าตั้งค่าเอง</text>
+  <text x="120" y="498" class="h" font-size="18" fill="#7a5600">ทางลัดสำรอง: ไอคอน “ตั้งค่าเครื่องห้องตรวจ” บน Desktop ทำอย่างเดียวกัน</text>
+
+  <!-- ขั้น 2 -->
+  <g filter="url(#shadow)"><rect x="800" y="215" width="710" height="295" rx="22" class="box"/></g>
+  <circle cx="845" cy="262" r="30" fill="#0d7078"/><text x="845" y="274" text-anchor="middle" class="num">2</text>
+  <text x="890" y="272" class="h t1">นำโฟลเดอร์ “ส่งไปเครื่องหมอ” ไปเครื่องห้องตรวจ</text>
+  <path d="M850 320h130v88H850z" fill="#f2c94c" stroke="#a67c00" stroke-width="4"/>
+  <path d="M850 320l65 50 65-50" fill="none" stroke="#a67c00" stroke-width="4"/>
+  <text x="915" y="440" text-anchor="middle" class="h t3">อยู่บน Desktop</text>
+  <text x="915" y="466" text-anchor="middle" class="h t3">ของเครื่องหน้าร้าน</text>
+  <text x="1030" y="330" class="h t3">ในโฟลเดอร์มี 4 ไฟล์:</text>
+  <text x="1030" y="360" class="h t3">📄 clinic.cer (ใบรับรอง — ไม่ใช่กุญแจลับ)</text>
+  <text x="1030" y="390" class="h t3">⚙️ ติดตั้งใบรับรอง (เครื่องห้องตรวจ)</text>
+  <text x="1030" y="420" class="h t3">🔗 เปิดระบบคลินิก (ห้องหมอ)</text>
+  <text x="1030" y="450" class="h t3">📝 อ่านก่อนเปิด</text>
+  <text x="1030" y="490" class="h" font-size="19" fill="#385d65">ส่งด้วย USB / LINE / แชร์โฟลเดอร์ก็ได้ — ไม่มีข้อมูลคนไข้</text>
+
+  <!-- ลูกศรลงแถวล่าง -->
+  <path d="M1155 535v40" stroke="#13828a" stroke-width="10" marker-end="url(#arrow)"/>
+
+  <!-- แถวเครื่องห้องตรวจ -->
+  <rect x="60" y="590" width="1480" height="300" rx="26" fill="#f0f8f8" stroke="#bfe0e2" stroke-width="2"/>
+  <text x="90" y="632" class="h" font-size="26" font-weight="700" fill="#0d7078">💻 เครื่องห้องตรวจ (คอมเครื่องที่สอง)</text>
+
+  <!-- ขั้น 3 -->
+  <g filter="url(#shadow)"><rect x="90" y="655" width="680" height="215" rx="22" class="box"/></g>
+  <circle cx="135" cy="702" r="30" fill="#0d7078"/><text x="135" y="714" text-anchor="middle" class="num">3</text>
+  <text x="180" y="712" class="h" font-size="19" font-weight="700" fill="#19343d">ดับเบิลคลิก “ติดตั้งใบรับรอง” → ถ้ามีกล่องฟ้า: More info → Run anyway → กด Yes</text>
+  <rect x="120" y="740" width="270" height="52" rx="10" fill="#dff1f2" stroke="#0d7078" stroke-width="3"/>
+  <text x="255" y="773" text-anchor="middle" class="h" font-size="18" fill="#0b626b" font-weight="700">⚙️ ติดตั้งใบรับรอง (เครื่องห้องตรวจ)</text>
+  <path d="M395 766h30" stroke="#13828a" stroke-width="5" marker-end="url(#arrow)"/>
+  <rect x="430" y="735" width="110" height="64" rx="8" class="win"/><rect x="430" y="735" width="110" height="16" rx="8" class="winbar"/>
+  <text x="485" y="770" text-anchor="middle" class="h" font-size="13" fill="#19343d">ติดตั้งใบรับรอง?</text>
+  <rect x="452" y="777" width="66" height="18" rx="4" class="btnY"/><text x="485" y="790" text-anchor="middle" class="h" font-size="12" fill="#fff" font-weight="700">Yes</text>
+  <path d="M545 766h30" stroke="#13828a" stroke-width="5" marker-end="url(#arrow)"/>
+  <rect x="580" y="735" width="170" height="64" rx="8" fill="#e8f7ec" stroke="#2ea043" stroke-width="2"/>
+  <text x="665" y="762" text-anchor="middle" class="h" font-size="18">✅</text>
+  <text x="665" y="786" text-anchor="middle" class="h" font-size="13" fill="#1a6b2c" font-weight="700">ติดตั้งใบรับรองแล้ว</text>
+  <text x="120" y="835" class="h t3">ทำครั้งเดียวต่อเครื่อง — ทำใหม่เฉพาะเมื่อหน้าร้านกดตั้งค่าใหม่แล้วส่งโฟลเดอร์ชุดใหม่มา</text>
+
+  <!-- ขั้น 4 -->
+  <g filter="url(#shadow)"><rect x="800" y="655" width="710" height="215" rx="22" class="box"/></g>
+  <circle cx="845" cy="702" r="30" fill="#0d7078"/><text x="845" y="714" text-anchor="middle" class="num">4</text>
+  <text x="890" y="712" class="h t1">เปิดทางลัด “เปิดระบบคลินิก (ห้องหมอ)”</text>
+  <rect x="830" y="740" width="640" height="46" rx="10" fill="#fff" stroke="#7a8fa6" stroke-width="2"/>
+  <text x="850" y="771" class="h" font-size="20" fill="#19343d">🔒  https://192.168.1.xxx:8444</text>
+  <text x="1440" y="771" text-anchor="end" class="h" font-size="16" fill="#1a6b2c" font-weight="700">มีกุญแจ ไม่มีคำเตือน = ถูกต้อง</text>
+  <text x="830" y="816" class="h" font-size="18" fill="#19343d">แล้วเข้าด้วยบัญชีแพทย์ · ถ้าขึ้น “ไม่ปลอดภัย” = ยังไม่ทำขั้น 3 หรือหน้าร้านเปลี่ยนเลขที่อยู่</text>
+  <text x="830" y="840" class="h" font-size="18" fill="#19343d">→ ให้หน้าร้านกดตั้งค่าใหม่ แล้วทำขั้น 2–3 ซ้ำ</text>
+  <text x="830" y="862" class="h" font-size="18" fill="#19343d">ถ้าเปิดไม่ได้เลย = เครื่องหน้าร้านปิดอยู่ หรือคนละ Wi-Fi หรือใช้ Guest Wi-Fi</text>
+
+  <rect x="60" y="915" width="1480" height="100" rx="24" fill="#fff4c8" stroke="#d5a516" stroke-width="3"/>
+  <text x="800" y="955" text-anchor="middle" class="h" font-size="26" font-weight="700" fill="#7a5600">ทั้งสองเครื่องต้องอยู่ Wi-Fi หรือสาย LAN วงเดียวกัน (ของคลินิก ไม่ใช่ Guest) และเครื่องหน้าร้านต้องเปิดอยู่</text>
+  <text x="800" y="992" text-anchor="middle" class="h" font-size="22" fill="#7a5600">ติดตั้งโปรแกรมที่เครื่องหน้าร้านเครื่องเดียว • ข้อมูลอยู่เครื่องหน้าร้าน เครื่องห้องตรวจแค่เปิดดู • ชุดทดลองห้ามกรอกข้อมูลคนไข้จริง</text>
+</svg>

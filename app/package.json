@@ -1,0 +1,22 @@
+{
+  "name": "clinic-offline",
+  "version": "1.0.6",
+  "license": "AGPL-3.0-only",
+  "repository": "https://github.com/mkungsuki/clinic-offline",
+  "description": "ระบบบริหารคลินิกแบบ offline 2 เครื่อง — zero dependency (node:http + node:sqlite)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --no-warnings server.js",
+    "seed": "node --no-warnings seed.js",
+    "seed:demo": "node --no-warnings seed.js --demo",
+    "seed:mock": "node --no-warnings seed-mock.js",
+    "test": "node --no-warnings test-regression.js && node --no-warnings test-recovery.js && node --no-warnings test-ui-static.js && node --no-warnings test-publish-public.js && node --no-warnings test-triggers.js && node --no-warnings test-console-encoding.js",
+    "test:http": "node --no-warnings test-http.js",
+    "test:browser": "node --no-warnings test-browser.js",
+    "test:updater": "node --no-warnings test-updater.js",
+    "recovery": "node --no-warnings recovery-assistant.js"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

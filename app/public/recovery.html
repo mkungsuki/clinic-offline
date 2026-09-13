@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ตัวช่วยกู้ข้อมูลคลินิก</title>
+<style>
+:root{font-family:Tahoma,"Noto Sans Thai",sans-serif;color:#17202a;background:#f4f7f9}*{box-sizing:border-box}
+body{margin:0}.wrap{max-width:760px;margin:0 auto;padding:28px 18px 60px}h1{font-size:30px;margin:0 0 8px}.lead{font-size:18px;color:#52606d;margin:0 0 24px}
+.card{background:#fff;border:1px solid #dbe4ea;border-radius:18px;padding:22px;margin:14px 0;box-shadow:0 4px 16px #1b39570b}.status{font-size:23px;font-weight:700}.good{color:#08783e}.warn{color:#9a5a00}.bad{color:#b42318}
+button{border:0;border-radius:12px;padding:14px 20px;font-size:18px;font-weight:700;cursor:pointer;background:#1769aa;color:#fff;margin:8px 8px 0 0}button.secondary{background:#e8f1f8;color:#174e78}button.danger{background:#b42318}button:disabled{opacity:.55;cursor:wait}
+.muted{color:#62717d}.point{font-size:20px;font-weight:700;margin:12px 0}.result{white-space:pre-wrap;padding:14px;border-radius:12px;background:#f1f5f7;margin-top:14px}.hidden{display:none}details{margin-top:16px;color:#62717d}code{word-break:break-all}.confirm{border:2px solid #f3b3ad}.challenge{font-size:36px;letter-spacing:8px;font-weight:800;color:#b42318}.confirm input{font-size:24px;padding:10px;width:180px;border:1px solid #b9c7d0;border-radius:10px}
+</style>
+</head>
+<body><main class="wrap">
+<h1>ตัวช่วยกู้ข้อมูลคลินิก</h1>
+<p class="lead">โปรแกรมนี้จะตรวจข้อมูลให้ก่อนเสมอ และจะไม่แตะข้อมูลที่ใช้งานอยู่จนกว่าท่านจะสั่งกู้จริง</p>
+
+<section class="card">
+  <div id="state" class="status warn">กำลังค้นหาข้อมูลสำรอง…</div>
+  <div id="message" class="muted">กรุณารอสักครู่</div>
+  <div id="recommended" class="hidden">
+    <div class="point">ข้อมูลที่แนะนำ: <span id="pointTime"></span></div>
+    <div class="muted" id="pointDetail"></div>
+    <button id="drillBtn" onclick="runDrill()">ซ้อมกู้ข้อมูล</button>
+    <button class="secondary" onclick="loadStatus()">ค้นหาใหม่</button>
+  </div>
+  <div id="result" class="result hidden"></div>
+  <details id="tech" class="hidden"><summary>รายละเอียดสำหรับช่าง</summary><code id="techPath"></code></details>
+</section>
+
+<section id="actual" class="card confirm hidden">
+  <h2>กู้ข้อมูลจริง</h2>
+  <p>ใช้เมื่อ ClinicApp เปิดไม่ได้หรือข้อมูลเสียเท่านั้น ระบบจะเก็บข้อมูลเดิมไว้ก่อนและย้อนกลับให้อัตโนมัติหากเปิดไม่สำเร็จ</p>
+  <p>เพื่อป้องกันการกดพลาด ให้พิมพ์เลขนี้:</p>
+  <div id="challenge" class="challenge"></div>
+  <input id="challengeInput" inputmode="numeric" maxlength="4" autocomplete="off">
+  <div><button id="restoreBtn" class="danger" onclick="runRestore()">ยืนยันกู้ข้อมูลจริง</button></div>
+</section>
+</main>
+<script>
+'use strict';
+const TOKEN='__RECOVERY_TOKEN__';
+let current=null;
+async function call(method,url,body){
+  const response=await fetch(url,{method,headers:{'X-Recovery-Token':TOKEN,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+  const data=await response.json();
+  if(!response.ok){const e=data.error||{};throw new Error(e.message||data.error||'ทำรายการไม่สำเร็จ')}
+  return data;
+}
+function thaiTime(value){if(!value)return 'ไม่ทราบเวลา';const d=new Date(String(value).replace(' ','T'));return Number.isNaN(d.getTime())?value:d.toLocaleString('th-TH',{dateStyle:'long',timeStyle:'short'})}
+function showResult(text,ok=true){const el=document.getElementById('result');el.classList.remove('hidden');el.className='result '+(ok?'good':'bad');el.textContent=text}
+async function loadStatus(){
+  document.getElementById('state').className='status warn';document.getElementById('state').textContent='กำลังค้นหาข้อมูลสำรอง…';
+  document.getElementById('recommended').classList.add('hidden');document.getElementById('actual').classList.add('hidden');
+  try{
+    const data=await call('GET','/api/status');
+    if(!data.sources.length){current=null;document.getElementById('state').className='status bad';document.getElementById('state').textContent='ยังไม่พบข้อมูลสำรอง';document.getElementById('message').textContent=data.message;return}
+    const source=data.sources.find(x=>x.id===data.recommendedSourceId)||data.sources[0];current={source,point:source.points[0],challenge:data.challenge};
+    document.getElementById('state').className='status good';document.getElementById('state').textContent='พบข้อมูลสำรองแล้ว';
+    document.getElementById('message').textContent='แนะนำให้ซ้อมกู้ก่อน หากผลผ่านจึงมั่นใจได้ว่าข้อมูลเปิดได้จริง';
+    document.getElementById('pointTime').textContent=thaiTime(current.point.createdAt);
+    const detail=`ไฟล์แนบ ${current.point.attachments} รายการ · โลโก้/เอกสาร ${current.point.assets} รายการ`;
+    const warn=current.point.encrypted===false?' ⚠️ ข้อมูลชุดนี้ไม่ได้เข้ารหัสด้วยกุญแจของคลินิก โปรดตรวจว่าเป็นข้อมูลสำรองของท่านจริงก่อนกู้':'';
+    const pd=document.getElementById('pointDetail');pd.textContent=detail+warn;pd.className=warn?'bad':'muted';
+    document.getElementById('recommended').classList.remove('hidden');
+    document.getElementById('tech').classList.remove('hidden');document.getElementById('techPath').textContent=source.technicianPath;
+    if(data.kitAvailable){document.getElementById('challenge').textContent=data.challenge;document.getElementById('actual').classList.remove('hidden')}
+  }catch(e){document.getElementById('state').className='status bad';document.getElementById('state').textContent='ค้นหาไม่สำเร็จ';document.getElementById('message').textContent=e.message}
+}
+async function runDrill(){
+  if(!current)return;const btn=document.getElementById('drillBtn');btn.disabled=true;showResult('กำลังซ้อมกู้และตรวจข้อมูล กรุณารอสักครู่…');
+  try{const r=await call('POST','/api/drill',{sourceId:current.source.id,manifestFile:current.point.id});showResult(`ซ้อมกู้สำเร็จ\nข้อมูลเปิดได้ครบถึง ${thaiTime(r.backupCreatedAt)}\nข้อมูลที่ใช้งานจริงไม่ได้ถูกเปลี่ยนแปลง`,true)}
+  catch(e){showResult(`ซ้อมกู้ไม่สำเร็จ\n${e.message}\nข้อมูลที่ใช้งานจริงไม่ได้ถูกเปลี่ยนแปลง`,false)}finally{btn.disabled=false}
+}
+async function runRestore(){
+  if(!current)return;const typed=document.getElementById('challengeInput').value.trim();
+  if(typed!==current.challenge){showResult('เลขยืนยันไม่ถูกต้อง ข้อมูลจริงยังไม่ได้ถูกเปลี่ยน',false);return}
+  if(!confirm('ยืนยันกู้ข้อมูลจริงใช่หรือไม่? ระบบจะสำรองข้อมูลเดิมไว้อีกชั้นก่อนเสมอ'))return;
+  const btn=document.getElementById('restoreBtn');btn.disabled=true;showResult('กำลังตรวจ สำรองของเดิม และกู้ข้อมูล กรุณาอย่าปิดเครื่องหรือถอด USB…');
+  try{const r=await call('POST','/api/restore',{sourceId:current.source.id,manifestFile:current.point.id,challenge:typed});showResult(`กู้ข้อมูลสำเร็จ\nClinicApp เปิดได้แล้ว\nข้อมูลกลับถึง ${thaiTime(r.backupCreatedAt)}`,true);document.getElementById('actual').classList.add('hidden')}
+  catch(e){showResult(`กู้ข้อมูลไม่สำเร็จ\n${e.message}`,false)}finally{btn.disabled=false}
+}
+loadStatus();
+</script></body></html>

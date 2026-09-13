@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>คลังยา</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  .cols { grid-template-columns: 1fr 380px; }
+  @media (max-width: 1000px) { .cols { grid-template-columns: 1fr; } }
+  .low { color: var(--red); font-weight: 700; }
+  .expired { color: var(--red); font-weight: 700; }
+  .expiring { color: #b45309; font-weight: 700; }
+  .warn-days { font-size: 13px; font-weight: 400; color: #555; white-space: nowrap; }
+  .warn-days input { width: 64px; }
+</style>
+</head>
+<body>
+<div id="backupBanner"></div>
+<div class="cols">
+  <div class="stack">
+    <div class="card">
+      <h2>คลังยา <span class="row" style="align-items:center;gap:10px">
+        <label class="warn-days" title="ยาที่ตั้งเกณฑ์ของตัวเองไว้ (ในฟอร์มแก้ยา/ตอนรับเข้า) ใช้เกณฑ์ของยานั้นแทน">⏰ เตือนใกล้หมดอายุล่วงหน้า (ค่ากลาง)
+          <input type="number" id="warnDays" min="1" max="3650" onchange="saveWarnDays()"> วัน</label>
+        <input type="text" id="filter" placeholder="กรอง..." style="width:180px">
+      </span></h2>
+      <div id="expirySummary" class="muted" style="margin-bottom:6px"></div>
+      <table class="t" id="drugTable"></table>
+    </div>
+    <div class="card">
+      <h2>ค่าบริการ / หัตถการ</h2>
+      <table class="t" id="svcTable"></table>
+      <div class="row mt">
+        <input type="text" id="svcName" placeholder="ชื่อค่าบริการใหม่ เช่น ค่าตรวจ, ทำแผล">
+        <input type="number" id="svcPrice" placeholder="ราคา" style="max-width:110px">
+        <button class="btn primary" onclick="addService()">เพิ่ม</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="card">
+      <h2 id="formTitle">เพิ่มยาใหม่</h2>
+      <div class="stack">
+        <button class="btn" onclick="openDrugCatalog()">📚 เลือกจากคลังยามาตรฐาน (เติมฟอร์มให้ แล้วใส่ราคาเอง)</button>
+        <input type="hidden" id="d_id">
+        <label class="f"><span>ชื่อยา (ที่ขึ้นฉลาก/ใบเสร็จ) *</span><input type="text" id="d_name"></label>
+        <div class="row">
+          <label class="f"><span>ชื่อสามัญ</span><input type="text" id="d_generic"></label>
+          <label class="f" style="flex:0 0 90px"><span>หน่วย</span><input type="text" id="d_unit" value="เม็ด"></label>
+        </div>
+        <div class="row">
+          <label class="f"><span>ราคาขาย/หน่วย *</span><input type="number" step="0.25" id="d_price"></label>
+          <label class="f"><span>ราคาทุน/หน่วย</span><input type="number" step="0.01" id="d_cost" placeholder="ไว้คิดกำไร"></label>
+          <label class="f"><span>จุดเตือนใกล้หมด</span><input type="number" id="d_reorder" value="10"></label>
+        </div>
+        <label class="f"><span>เตือนใกล้หมดอายุล่วงหน้าเฉพาะยานี้ (วัน — ว่าง = ค่ากลาง · วันหมดอายุกรอกเป็นราย lot ตอนรับเข้า)</span><input type="number" id="d_warn" min="1" max="3650" placeholder="ตาม supplier"></label>
+        <label class="f"><span>วิธีใช้ default (ขึ้นตอนสั่ง)</span><input type="text" id="d_instr" placeholder="เช่น ครั้งละ 1 เม็ด วันละ 3 ครั้ง หลังอาหาร"></label>
+        <label class="f"><span>รูปแบบสั่งยาเริ่มต้น</span><select id="d_dose_mode">
+          <option value="standard">เวลามาตรฐาน — เช้า/เที่ยง/เย็น/ก่อนนอน</option>
+          <option value="exact_times">ระบุเวลา — เช่น Levodopa</option>
+          <option value="prn">เมื่อมีอาการ (PRN)</option>
+          <option value="manual">คำสั่งพิเศษ / ระบุจำนวนเอง</option>
+        </select></label>
+        <div class="row">
+          <button class="btn primary grow" onclick="saveDrug()">💾 บันทึก</button>
+          <button class="btn" onclick="clearForm()">ล้าง</button>
+        </div>
+      </div>
+    </div>
+    <div class="card hidden" id="moveCard"></div>
+    <div class="card">
+      <h2>Import ยาจาก CSV <span class="muted">(admin — seed วันแรก)</span></h2>
+      <p class="muted">รูปแบบ: ชื่อยา,หน่วย,ราคาขาย,จำนวนตั้งต้น,จุดเตือน,ราคาทุน (บรรทัดละตัว — ทุนเว้นได้)</p>
+      <textarea id="csv" rows="5" placeholder="Paracetamol 500mg,เม็ด,2,500,100,0.5&#10;Amoxicillin 500mg,แคปซูล,5,300,50,2.5"></textarea>
+      <button class="btn mt" onclick="importCSV()">Import</button>
+      <div class="muted" id="importResult"></div>
+    </div>
+  </div>
+</div>
+
+<script src="/common.js"></script>
+<script>
+'use strict';
+let drugs = [], services = [], warnDays = 90;
+
+async function load() {
+  drugs = await api('GET', '/api/drugs');
+  services = await api('GET', '/api/services');
+  // เกณฑ์เตือนหมดอายุเป็นของหมอแต่ละคลินิก (ขึ้นกับรอบสั่งยา/supplier) — โหลดค่ากลางที่ตั้งไว้ ไม่มี = 90
+  const settings = await api('GET', '/api/settings');
+  warnDays = Number(settings.stock_expiry_warn_days) >= 1 ? Number(settings.stock_expiry_warn_days) : 90;
+  document.getElementById('warnDays').value = warnDays;
+  render();
+  // "เด้งเตือน" ตามที่หมอขอ: เข้าหน้านี้แล้วมีของเข้าเกณฑ์ ให้บอกทันทีโดยไม่ต้องกวาดตาหาเอง (เด้งเฉพาะตอนโหลด)
+  const expired = drugs.filter(d => expiryState(d) === 'expired').length;
+  const expiring = drugs.filter(d => expiryState(d) === 'expiring').length;
+  if (expired || expiring) {
+    toast(`⏰ ยา${expired ? `หมดอายุแล้ว ${expired} รายการ` : ''}${expired && expiring ? ' · ' : ''}${expiring ? `ใกล้หมดอายุ ${expiring} รายการ` : ''} — ดูแถบเตือนเหนือตารางคลังยา`, expired > 0);
+  }
+}
+// สถานะหมดอายุ: 'expired' = เลยวันแล้ว (ไม่ขึ้นกับเกณฑ์), 'expiring' = ภายในเกณฑ์เตือน, '' = ปกติ/ไม่ระบุ
+// เกณฑ์ = ของยาตัวนั้น (supplier แต่ละยาต่างกัน — หมอขอ 2026-08-31) ถ้าไม่ได้ตั้งใช้ค่ากลาง
+function warnLimit(d) { return d.expiry_warn_days != null ? d.expiry_warn_days : warnDays; }
+function expiryState(d) {
+  if (!d.expiry_date) return '';
+  const days = expiryDaysLeft(d);
+  return days < 0 ? 'expired' : days <= warnLimit(d) ? 'expiring' : '';
+}
+function expiryDaysLeft(d) {
+  return Math.floor((new Date(d.expiry_date + 'T00:00:00') - new Date(new Date().toDateString())) / 86400000);
+}
+function thDateOnly(iso) {
+  const [y, m, day] = iso.split('-').map(Number);
+  return `${day}/${m}/${y + 543}`;
+}
+function expiryCell(d) {
+  // ทั้งช่องคลิกได้ = เปิดกล่อง lot ของยาตัวนั้น (ดู/ปิด/แก้/เพิ่ม lot)
+  const lotsNote = d.active_lots > 1 ? `<br><span class="muted" style="font-weight:400">${d.active_lots} lot</span>` : '';
+  let inner;
+  if (!d.expiry_date) inner = '<span class="muted">— <u>เพิ่ม lot</u></span>';
+  else {
+    const state = expiryState(d);
+    const days = expiryDaysLeft(d);
+    if (state === 'expired') inner = `<span class="expired">${thDateOnly(d.expiry_date)}<br>หมดอายุแล้ว</span>${lotsNote}`;
+    else if (state === 'expiring') inner = `<span class="expiring">${thDateOnly(d.expiry_date)}<br>อีก ${days} วัน</span>${lotsNote}`;
+    else inner = `${thDateOnly(d.expiry_date)}${lotsNote}`;
+  }
+  return `<a href="javascript:void(0)" onclick="openLots(${d.id})" title="ดู/จัดการ lot ของยานี้" style="text-decoration:none;color:inherit">${inner}</a>`;
+}
+
+// กล่อง lot ต่อยา: เรียงตามวันหมดอายุ (ตัวใกล้สุด = ตัวที่ระบบใช้เตือน) — ปิด lot ที่หมด/เก็บออกแล้ว
+// ตัวถัดไปเลื่อนขึ้นมาเป็นตัวเตือนเอง · ปิด lot ไม่แตะยอดสต็อก (ยอดใช้ปุ่ม "ปรับยอด" ตามเดิม)
+async function openLots(id, showCleared = false) {
+  const d = drugs.find(x => x.id === id);
+  const lots = await api('GET', `/api/drugs/${id}/lots${showCleared ? '?all=1' : ''}`);
+  const today = new Date(new Date().toDateString());
+  const row = l => {
+    const days = Math.floor((new Date(l.expiry_date + 'T00:00:00') - today) / 86400000);
+    const state = l.cleared_at ? '' : days < 0 ? 'expired' : days <= warnLimit(d) ? 'expiring' : '';
+    const status = l.cleared_at ? `<span class="muted">ปิดแล้ว ${thDate(l.cleared_at)}${l.cleared_reason ? ' · ' + esc(l.cleared_reason) : ''}</span>`
+      : state === 'expired' ? '<span class="expired">หมดอายุแล้ว</span>'
+      : state === 'expiring' ? `<span class="expiring">อีก ${days} วัน</span>` : `อีก ${days} วัน`;
+    return `<tr ${l.cleared_at ? 'style="opacity:.55"' : ''}>
+      <td class="${state}">${thDateOnly(l.expiry_date)}</td>
+      <td>${esc(l.lot_label || '')}<div class="muted" style="font-size:12px">${l.qty_received != null ? `รับ ${l.qty_received} ${esc(d.unit || '')} · ` : ''}${thDate(l.received_at)}${l.received_by_name ? ' · ' + esc(l.received_by_name) : ''}</div></td>
+      <td>${status}</td>
+      <td>${l.cleared_at ? '' : `<button class="btn sm" onclick="editLot(${id},${l.id},'${esc(l.expiry_date)}','${esc(l.lot_label || '')}')">แก้</button>
+        <button class="btn sm ghost-red" onclick="clearLotAsk(${id},${l.id})">เก็บออกแล้ว</button>`}</td></tr>`;
+  };
+  openModal(`<h2>📦 lot ของ ${esc(d.name)}</h2>
+    <div class="muted" style="margin-bottom:6px">ระบบเตือนจาก lot ที่ใกล้หมดสุด — lot ไหนหมด/เก็บออกจากตู้แล้ว กด "เก็บออกแล้ว" ตัวถัดไปจะเลื่อนขึ้นมาเตือนแทนเอง<br>ปิด lot ไม่กระทบจำนวนคงเหลือ — ถ้านับของแล้วยอดเปลี่ยน ใช้ปุ่ม "ปรับยอด" ตามเดิม</div>
+    <table class="t"><tr><th>หมดอายุ</th><th>lot / ที่มา</th><th>สถานะ</th><th></th></tr>
+    ${lots.map(row).join('') || `<tr><td colspan="4" class="muted">ยังไม่มี lot ${showCleared ? '' : 'ที่เปิดอยู่'} — กรอกวันหมดอายุตอน "+รับเข้า" หรือกด "เพิ่ม lot" สำหรับของที่อยู่ในตู้แล้ว</td></tr>`}</table>
+    <div class="row" style="margin-top:10px">
+      <button class="btn green" onclick="addLotAsk(${id})">➕ เพิ่ม lot (ของที่อยู่ในตู้แล้ว)</button>
+      <button class="btn sm" onclick="openLots(${id}, ${!showCleared})">${showCleared ? 'ซ่อน lot ที่ปิดแล้ว' : 'ดู lot ที่ปิดแล้ว'}</button>
+      <button class="btn" onclick="closeModal()">ปิด</button></div>`);
+}
+function clearLotAsk(drugId, lotId) {
+  openAsk({
+    title: 'ปิด lot นี้ (หมด/เก็บออกจากตู้แล้ว)',
+    fields: [{ id: 'mReason', label: 'เหตุผล (ไม่บังคับ)', placeholder: 'เช่น ใช้หมด, เก็บทำลายเพราะหมดอายุ' }],
+    okText: 'ปิด lot',
+    onOk: v => api('POST', `/api/lots/${lotId}/clear`, { reason: v.mReason })
+      .then(() => { toast('ปิด lot แล้ว — lot ถัดไป (ถ้ามี) จะเป็นตัวเตือนแทน'); load(); openLots(drugId); })
+      .catch(e => toast(e.message, true)),
+  });
+}
+function editLot(drugId, lotId, expiry, label) {
+  openAsk({
+    title: 'แก้ lot (กรณีคีย์ผิด)',
+    fields: [
+      { id: 'mExpiry', label: 'วันหมดอายุ', type: 'date', value: expiry },
+      { id: 'mLot', label: 'เลข lot ข้างกล่อง (ไม่บังคับ)', value: label },
+    ],
+    okText: 'บันทึก',
+    onOk: v => {
+      if (!v.mExpiry) { toast('เลือกวันหมดอายุก่อน', true); return; }
+      api('PATCH', `/api/lots/${lotId}`, { expiry_date: v.mExpiry, lot_label: v.mLot })
+        .then(() => { toast('แก้ lot แล้ว'); load(); openLots(drugId); })
+        .catch(e => toast(e.message, true));
+    },
+  });
+}
+function addLotAsk(drugId) {
+  openAsk({
+    title: 'เพิ่ม lot (ของที่อยู่ในตู้อยู่แล้ว — ไม่เพิ่มยอดสต็อก)',
+    fields: [
+      { id: 'mExpiry', label: 'วันหมดอายุของ lot นี้', type: 'date' },
+      { id: 'mLot', label: 'เลข lot ข้างกล่อง (ไม่บังคับ)' },
+    ],
+    okText: 'เพิ่ม lot',
+    onOk: v => {
+      if (!v.mExpiry) { toast('เลือกวันหมดอายุก่อน', true); return; }
+      api('POST', `/api/drugs/${drugId}/lots`, { expiry_date: v.mExpiry, lot_label: v.mLot })
+        .then(() => { toast('เพิ่ม lot แล้ว'); load(); openLots(drugId); })
+        .catch(e => toast(e.message, true));
+    },
+  });
+}
+function render() {
+  const f = document.getElementById('filter').value.trim().toLowerCase();
+  const list = drugs.filter(d => !f || d.name.toLowerCase().includes(f) || (d.generic_name || '').toLowerCase().includes(f));
+  const expired = drugs.filter(d => expiryState(d) === 'expired');
+  const expiring = drugs.filter(d => expiryState(d) === 'expiring');
+  document.getElementById('expirySummary').innerHTML = (expired.length || expiring.length)
+    ? `${expired.length ? `<span class="expired">🔴 หมดอายุแล้ว ${expired.length} รายการ</span> ` : ''}` +
+      `${expiring.length ? `<span class="expiring">🟡 ใกล้หมดอายุตามเกณฑ์ ${expiring.length} รายการ</span>` : ''}` +
+      ' — ดูคอลัมน์ "หมดอายุ" แล้วเก็บออก/วางแผนสั่งใหม่'
+    : '';
+  document.getElementById('drugTable').innerHTML =
+    `<tr><th>ชื่อยา</th><th class="num">คงเหลือ</th><th>หมดอายุ</th><th class="num">ขาย</th><th class="num">ทุน</th><th></th></tr>` +
+    (list.map(d => `<tr>
+      <td><b>${esc(d.name)}</b>${d.generic_name ? ` <span class="muted">${esc(d.generic_name)}</span>` : ''}</td>
+      <td class="num ${d.qty_on_hand <= d.reorder_level ? 'low' : ''}">${d.qty_on_hand} ${esc(d.unit || '')}
+        ${d.qty_on_hand <= d.reorder_level ? '⚠' : ''}${d.qty_on_hand < 0 ? '<div class="muted">ติดลบ — นับสต็อกด่วน</div>' : ''}</td>
+      <td>${expiryCell(d)}</td>
+      <td class="num money">${baht(d.price)}</td>
+      <td class="num money">${d.cost != null ? baht(d.cost) : '<span class="muted" title="ยังไม่ใส่ทุน — กำไรจะนับทุน 0">—</span>'}</td>
+      <td>
+        <button class="btn sm green" onclick="receive(${d.id})">+รับเข้า</button>
+        <button class="btn sm" onclick="adjust(${d.id})">ปรับยอด</button>
+        <button class="btn sm" onclick="editDrug(${d.id})">แก้</button>
+        <button class="btn sm" onclick="showMoves(${d.id})">ประวัติ</button>
+      </td></tr>`).join('') || '<tr><td colspan="6" class="muted">ไม่มียา</td></tr>');
+  document.getElementById('svcTable').innerHTML =
+    `<tr><th>รายการ</th><th class="num">ราคา</th><th></th></tr>` +
+    services.map(s => `<tr><td>${esc(s.name)}</td><td class="num money">${baht(s.price)}</td>
+      <td><button class="btn sm" onclick="editService(${s.id})">แก้ราคา</button></td></tr>`).join('');
+}
+document.getElementById('filter').addEventListener('input', render);
+
+// เกณฑ์เตือนเป็น setting กลาง (เครื่องหน้าร้าน/ห้องตรวจเห็นเลขเดียวกัน) — แก้แล้วมีผลทั้งตารางทันที
+async function saveWarnDays() {
+  const el = document.getElementById('warnDays');
+  const days = Number(el.value);
+  if (!Number.isInteger(days) || days < 1 || days > 3650) {
+    toast('จำนวนวันเตือนล่วงหน้าต้องเป็นตัวเลข 1–3650 วัน', true);
+    el.value = warnDays;
+    return;
+  }
+  try {
+    await api('POST', '/api/stock/expiry-warning', { days });
+    warnDays = days;
+    toast(`ตั้งเตือนล่วงหน้า ${days} วันแล้ว`);
+    render();
+  } catch (e) { toast(e.message, true); el.value = warnDays; }
+}
+
+// คลังยามาตรฐาน (UAT รอบ 2): ฐานอ้างอิงให้ดัด — เติมฟอร์มเฉยๆ ยังไม่เข้าคลังจริงจนกว่าจะใส่ราคาแล้วกดบันทึกเอง
+let drugCatalog = null;
+async function openDrugCatalog(filter = '') {
+  if (!drugCatalog) drugCatalog = await api('GET', '/api/common-drugs');
+  const q = filter.trim().toLowerCase();
+  const existing = new Set(drugs.map(d => d.name.toLowerCase()));
+  const list = drugCatalog.drugs.filter(d => !q
+    || d.name.toLowerCase().includes(q) || (d.generic_name || '').toLowerCase().includes(q) || d.category.includes(filter.trim()));
+  const groups = [...new Set(list.map(d => d.category))];
+  openModal(`<h2>📚 คลังยามาตรฐาน</h2>
+    <div class="muted" style="margin-bottom:6px">ขนาด/วิธีใช้เป็น<b>ค่าตั้งต้นทั่วไปให้ดัด</b> — ตรวจให้ตรง practice ของหมอก่อนบันทึก
+      ระบบจะเติมฟอร์มให้เฉยๆ ยาจะเข้าคลังก็ต่อเมื่อใส่ราคาแล้วกด 💾 เอง</div>
+    <input id="catSearch" placeholder="ค้นชื่อยา / ชื่อสามัญ / หมวด..." value="${esc(filter)}" style="width:100%;margin-bottom:6px"
+      oninput="openDrugCatalog(this.value)">
+    <div style="max-height:55vh;overflow:auto">
+    ${groups.map(g => `<div style="font-weight:700;background:#f1f5f9;border-radius:8px;padding:5px 10px;margin:8px 0 4px">${esc(g)}</div>`
+      + list.filter(d => d.category === g).map(d => `<div class="mgr-row">
+        <span class="nm"><b>${esc(d.name)}</b> <span class="muted">${esc(d.generic_name || '')} · ${esc(d.unit)}</span>
+          ${existing.has(d.name.toLowerCase()) ? '<span class="chip" style="background:#dcfce7">มีในคลังแล้ว</span>' : ''}<br>
+          <span class="muted" style="font-size:12px">${esc(d.default_instructions)}</span></span>
+        <button class="btn sm" onclick='pickCatalogDrug(${JSON.stringify(JSON.stringify(d))})'>ใช้เป็นฐาน</button>
+      </div>`).join('')).join('') || '<div class="muted">ไม่พบ</div>'}
+    </div>
+    <div class="row" style="margin-top:10px"><button class="btn" onclick="closeModal()">ปิด</button></div>`);
+  const s = document.getElementById('catSearch');
+  s.focus();
+  s.setSelectionRange(s.value.length, s.value.length);
+}
+function pickCatalogDrug(json) {
+  const d = JSON.parse(json);
+  clearForm();
+  document.getElementById('formTitle').textContent = `เพิ่มยาใหม่ (ฐานจากคลังมาตรฐาน — ตรวจ/แก้ได้ทุกช่อง)`;
+  document.getElementById('d_name').value = d.name;
+  document.getElementById('d_generic').value = d.generic_name || '';
+  document.getElementById('d_unit').value = d.unit || 'เม็ด';
+  document.getElementById('d_instr').value = d.default_instructions || '';
+  document.getElementById('d_dose_mode').value = d.dose_mode || 'standard';
+  closeModal();
+  // พาสายตาไปที่ฟอร์ม (อยู่คอลัมน์ขวา — จอกว้างมากอาจมองไม่เห็นว่าถูกเติมแล้ว)
+  const card = document.getElementById('formTitle').closest('.card');
+  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  card.classList.remove('flash-card');
+  void card.offsetWidth;
+  card.classList.add('flash-card');
+  document.getElementById('d_price').focus();
+  toast(`เติมฟอร์มจาก "${d.name}" แล้ว → ใส่ราคาขาย/ทุนในฟอร์มที่กะพริบ แล้วกด 💾 บันทึก`);
+}
+
+function receive(id) {
+  const d = drugs.find(x => x.id === id);
+  // op_id ต่อ "การเปิดกล่องรับเข้า 1 ครั้ง" (exactly-once — ดู POST /api/drugs/:id/receive):
+  // connection ขาดแล้วกดซ้ำในกล่องเดิม = รอบเดิม ไม่รับเบิ้ล · เปิดกล่องใหม่ = ตั้งใจรับอีกรอบจริง
+  const opId = crypto.randomUUID();
+  openAsk({
+    title: `📦 รับยาเข้า — ${esc(d.name)}`,
+    intro: `คงเหลือตอนนี้ ${d.qty_on_hand} ${esc(d.unit || '')}`,
+    fields: [
+      { id: 'mQty', label: `รับเข้ากี่${d.unit || 'หน่วย'}`, type: 'number' },
+      { id: 'mCost', label: `ทุนต่อหน่วยรอบนี้ (ปัจจุบัน ${d.cost != null ? d.cost : 'ยังไม่ใส่'} — เว้นว่าง = ไม่เปลี่ยน)`, type: 'number' },
+      { id: 'mExpiry', label: 'วันหมดอายุของ lot รอบนี้ (ระบบจะเก็บแยกทุก lot แล้วเตือน lot ที่ใกล้หมดสุดให้เอง)', type: 'date' },
+      { id: 'mLot', label: 'เลข lot ข้างกล่อง (ไม่บังคับ — ช่วยให้หาถูกกล่องตอนเก็บออก)' },
+      { id: 'mWarn', label: `เตือนล่วงหน้าเฉพาะยานี้ (ตอนนี้ ${d.expiry_warn_days != null ? d.expiry_warn_days : `ค่ากลาง ${warnDays}`} วัน — เว้นว่าง = ไม่เปลี่ยน)`, type: 'number' },
+    ],
+    okText: 'รับเข้า',
+    onOk: v => {
+      const qty = Number(v.mQty);
+      if (!qty || qty <= 0) { toast('จำนวนไม่ถูกต้อง', true); return; }
+      const body = { qty, reason: 'รับยาเข้า', op_id: opId };
+      if (v.mCost.trim() !== '') body.cost = Number(v.mCost);
+      if (v.mExpiry.trim() !== '') body.expiry_date = v.mExpiry;
+      if (v.mLot.trim() !== '') body.lot_label = v.mLot.trim();
+      if (v.mWarn.trim() !== '') body.expiry_warn_days = Number(v.mWarn);
+      api('POST', `/api/drugs/${id}/receive`, body)
+        .then(() => {
+          closeModal();
+          // บอกให้ครบว่ารอบนี้บันทึกอะไรไปบ้าง — ผู้ใช้ต้องไม่ต้องเดาว่า lot "ไปบันทึกไว้ที่ไหน"
+          const extra = [body.expiry_date ? `บันทึก lot ใหม่ หมดอายุ ${thDateOnly(body.expiry_date)}` : '',
+            body.expiry_warn_days ? `เตือนล่วงหน้า ${body.expiry_warn_days} วัน` : ''].filter(Boolean).join(' · ');
+          toast(`รับ ${esc(d.name)} เข้า ${qty} ${esc(d.unit || '')} แล้ว${extra ? ' · ' + extra : ''} — ดู/แก้ lot ได้ที่คอลัมน์ "หมดอายุ"`);
+          load();
+        })
+        .catch(e => {
+          if (e.status === 409 && e.data && e.data.already_received) { closeModal(); toast(e.message, true); load(); }
+          else toast(e.message, true);
+        });
+    },
+  });
+}
+function adjust(id) {
+  const d = drugs.find(x => x.id === id);
+  openAsk({
+    title: `🔢 ปรับยอดตามนับจริง — ${esc(d.name)}`,
+    intro: `ระบบว่ามี ${d.qty_on_hand} ${esc(d.unit || '')}`,
+    fields: [
+      { id: 'mNewQty', label: 'นับจริงได้กี่หน่วย', type: 'number' },
+      { id: 'mReason', label: 'เหตุผล', placeholder: 'เช่น นับสต็อกประจำเดือน, ยาแตก/หมดอายุ' },
+    ],
+    okText: 'ปรับยอด',
+    onOk: v => {
+      if (v.mNewQty === '') { toast('ใส่จำนวนที่นับได้ก่อน', true); return; }
+      if (!v.mReason.trim()) { toast('ต้องใส่เหตุผล', true); return; }
+      api('POST', `/api/drugs/${id}/adjust`, { new_qty: Number(v.mNewQty), reason: v.mReason })
+        .then(r => { closeModal(); toast(`ปรับแล้ว (${r.diff > 0 ? '+' : ''}${r.diff})`); load(); })
+        .catch(e => toast(e.message, true));
+    },
+  });
+}
+function editDrug(id) {
+  const d = drugs.find(x => x.id === id);
+  document.getElementById('formTitle').textContent = `แก้ไข: ${d.name}`;
+  document.getElementById('d_id').value = d.id;
+  document.getElementById('d_name').value = d.name;
+  document.getElementById('d_generic').value = d.generic_name || '';
+  document.getElementById('d_unit').value = d.unit || '';
+  document.getElementById('d_price').value = d.price;
+  document.getElementById('d_cost').value = d.cost != null ? d.cost : '';
+  document.getElementById('d_reorder').value = d.reorder_level;
+  document.getElementById('d_warn').value = d.expiry_warn_days != null ? d.expiry_warn_days : '';
+  document.getElementById('d_instr').value = d.default_instructions || '';
+  document.getElementById('d_dose_mode').value = d.dose_mode || 'standard';
+}
+function clearForm() {
+  document.getElementById('formTitle').textContent = 'เพิ่มยาใหม่';
+  ['d_id', 'd_name', 'd_generic', 'd_price', 'd_cost', 'd_warn', 'd_instr'].forEach(x => document.getElementById(x).value = '');
+  document.getElementById('d_unit').value = 'เม็ด';
+  document.getElementById('d_reorder').value = 10;
+  document.getElementById('d_dose_mode').value = 'standard';
+}
+async function saveDrug() {
+  const id = document.getElementById('d_id').value;
+  const body = {
+    name: document.getElementById('d_name').value,
+    generic_name: document.getElementById('d_generic').value,
+    unit: document.getElementById('d_unit').value,
+    price: document.getElementById('d_price').value,
+    cost: document.getElementById('d_cost').value,
+    reorder_level: document.getElementById('d_reorder').value,
+    expiry_warn_days: document.getElementById('d_warn').value,
+    default_instructions: document.getElementById('d_instr').value,
+    dose_mode: document.getElementById('d_dose_mode').value,
+  };
+  if (!body.name.trim()) { toast('ต้องมีชื่อยา', true); return; }
+  try {
+    if (id) await api('PATCH', `/api/drugs/${id}`, body);
+    else await api('POST', '/api/drugs', body);
+    toast('บันทึกแล้ว'); clearForm(); load();
+  } catch (e) { toast(e.message, true); }
+}
+async function showMoves(id) {
+  const d = drugs.find(x => x.id === id);
+  const moves = await api('GET', `/api/drugs/${id}/movements`);
+  const card = document.getElementById('moveCard');
+  card.classList.remove('hidden');
+  const th = { receive: 'รับเข้า', dispense: 'จ่าย', adjust: 'ปรับยอด', void_return: 'คืนจาก void' };
+  card.innerHTML = `<h2>ประวัติ: ${esc(d.name)} <button class="btn sm" onclick="this.closest('.card').classList.add('hidden')">ปิด</button></h2>
+    <table class="t"><tr><th>เวลา</th><th>ประเภท</th><th class="num">จำนวน</th><th>อ้างอิง</th></tr>
+    ${moves.map(m => `<tr><td>${thDate(m.created_at)}</td><td>${th[m.type] || m.type}</td>
+      <td class="num">${m.qty > 0 ? '+' : ''}${m.qty}</td>
+      <td class="muted">${esc(m.ref || '')} ${esc(m.reason || '')} · ${esc(m.by_name || '')}</td></tr>`).join('')}</table>`;
+}
+async function addService() {
+  const name = document.getElementById('svcName').value.trim();
+  const price = Number(document.getElementById('svcPrice').value);
+  if (!name) { toast('ใส่ชื่อก่อน', true); return; }
+  await api('POST', '/api/services', { name, price });
+  document.getElementById('svcName').value = ''; document.getElementById('svcPrice').value = '';
+  toast('เพิ่มแล้ว'); load();
+}
+function editService(id) {
+  const s = services.find(x => x.id === id);
+  openAsk({
+    title: `แก้ราคา — ${esc(s.name)}`,
+    fields: [{ id: 'mPrice', label: 'ราคาใหม่ (บาท)', type: 'number', value: s.price }],
+    okText: 'บันทึกราคา',
+    onOk: v => {
+      const price = Number(v.mPrice);
+      if (!isFinite(price) || price < 0) { toast('ราคาไม่ถูกต้อง', true); return; }
+      api('PATCH', `/api/services/${id}`, { name: s.name, price })
+        .then(() => { closeModal(); toast('แก้ราคาแล้ว'); load(); }).catch(e => toast(e.message, true));
+    },
+  });
+}
+async function importCSV() {
+  try {
+    const r = await api('POST', '/api/drugs/import-csv', { csv: document.getElementById('csv').value });
+    document.getElementById('importResult').textContent =
+      `เพิ่ม ${r.added} รายการ${r.errors.length ? ' | ผิดพลาด: ' + r.errors.join('; ') : ''}`;
+    load();
+  } catch (e) { toast(e.message, true); }
+}
+initPage('stock').then(me => { if (me) load(); });
+</script>
+</body>
+</html>

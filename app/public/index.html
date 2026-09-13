@@ -1,0 +1,929 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>หน้าคลินิก</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  /* เฟส 4 (2026-08-18): คอลัมน์ข้างเป็น fr ให้หดตามจอ คิวกลางกว้างสุดเสมอ — 3 คอลัมน์รอดถึง ~880px (min 220+360+250+ช่องว่าง 48)
+     → laptop 1366@125% (1093) และ @150% (911) ยังเห็น 3 คอลัมน์ · ต่ำกว่า 900 (เช่น 1280@150% = 853) ค่อยพับ (เดิม: px ตายตัว 340/1fr/420 + พับที่ 1100 → 1366@125% เห็นคอลัมน์เดียว) */
+  .cols { grid-template-columns: minmax(220px, .9fr) minmax(360px, 2fr) minmax(250px, 1fr); }
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+  /* บิลอยู่ในการ์ดเดียวกับรายชื่อรอจ่าย (F2): กางใต้รายชื่อ คั่นด้วยเส้น */
+  #billBody { border-top: 1px solid var(--line2); margin-top: 10px; padding-top: 10px; }
+  #billBody .bill-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  /* รายการบิลแบบ 3 บรรทัด (F3) แทนตาราง 4 คอลัมน์ที่ล้นในคอลัมน์แคบ 250–340px */
+  .blines { display: flex; flex-direction: column; gap: 6px; }
+  .bline { border: 1px solid var(--line2); border-radius: 12px; padding: 8px 10px; background: var(--card); }
+  .bline.disc { background: var(--amber-soft); border-color: #fcd34d; }
+  .bline .bl-head { display: flex; align-items: baseline; gap: 8px; }
+  .bline .bl-name { flex: 1; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+  .bline .bl-instr { font-size: 12.5px; margin-top: 1px; }
+  .bline .bl-ctl { display: flex; align-items: center; gap: 6px; margin-top: 5px; flex-wrap: wrap; font-size: 13px; }
+  .bline .bl-ctl input[type=number] { width: 66px; padding: 4px 6px; text-align: center; border-radius: 8px; }
+  .bline .bl-ctl .sp { flex: 1; }
+  /* ช่อง vitals ใหญ่ อ่านง่าย (feedback UAT) */
+  #vitalsForm { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  #vitalsForm label.f span { font-size: 15px; color: var(--ink); font-weight: 600; }
+  #vitalsForm input { width: 100%; font-size: 22px; padding: 12px 10px; text-align: center; }
+  #vitalsForm input::placeholder { font-size: 15px; color: #b6c2d4; }
+  #vitalsForm .btn { grid-column: 1 / -1; font-size: 18px; padding: 12px; }
+  .prev-vitals { grid-column: 1 / -1; font-size: 13.5px; color: var(--dim);
+    background: var(--surface2); border-radius: 8px; padding: 6px 10px; }
+  .pay-total { font-size: 28px; font-weight: 800; text-align: right; white-space: nowrap; }
+  @media (max-width: 1000px) and (min-resolution: 1.2dppx) { .pay-total { font-size: 24px; } .bline { padding: 6px 8px; } }
+  .net-line { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; border-top: 1px dashed var(--line); padding-top: 6px; }
+</style>
+</head>
+<body>
+<div id="backupBanner"></div>
+<div class="cols">
+
+  <!-- ================= ซ้าย: ค้นหา / ลงทะเบียน ================= -->
+  <div class="stack">
+    <div class="card">
+      <h2>ค้นหาคนไข้ <span class="muted">ชื่อ / เบอร์ / HN / ปชช.</span></h2>
+      <div class="searchwrap"><input type="text" id="patSearch" placeholder="พิมพ์เพื่อค้นหา..." autofocus></div>
+      <button class="btn mt" id="btnNewPat">➕ ลงทะเบียนคนไข้ใหม่</button>
+    </div>
+
+    <div class="card hidden" id="patCard"></div>
+  </div>
+
+  <!-- ================= กลาง: คิววันนี้ ================= -->
+  <div class="stack">
+    <div class="warn-box hidden" id="staleBox"></div>
+    <div class="card">
+      <h2>คิววันนี้ <span class="muted" id="qCount"></span></h2>
+      <div class="stack" id="queueList"><div class="muted">ยังไม่มีคิว</div></div>
+    </div>
+  </div>
+
+  <!-- ================= ขวา: สถานีจ่ายยา / คิดเงิน ================= -->
+  <div class="stack">
+    <!-- เฟส 4 (F2): รายชื่อรอจ่าย + บิล อยู่การ์ดเดียว — กด "คิดเงิน" บิลกางใต้รายชื่อ (เดิม 2 การ์ดโชว์คนละคนได้) -->
+    <div class="card" id="payCard">
+      <h2>💰 รอจ่ายยา / เก็บเงิน <span class="muted" id="payCount"></span></h2>
+      <div class="stack" id="payQueue" style="gap:6px"><div class="muted">ยังไม่มีคิวรอจ่ายเงิน</div></div>
+      <div class="muted" id="billEmpty" style="margin-top:8px">กด <b>💰 คิดเงิน</b> ที่รายชื่อด้านบน บิลจะกางตรงนี้</div>
+      <div id="billBody" class="hidden"></div>
+    </div>
+  </div>
+</div>
+
+<script src="/common.js"></script>
+<script>
+'use strict';
+let queue = [], selVisitId = null, billVisit = null, billLines = [], billDirty = false;
+
+// ---------- วันเกิดแบบ พ.ศ. (UAT E1): กรอก วัน/เดือน/ปี พ.ศ. เก็บภายในเป็น ค.ศ. ISO ----------
+function readDob(prefix) {
+  const d = Number(document.getElementById(`${prefix}_d`).value);
+  const m = Number(document.getElementById(`${prefix}_m`).value);
+  let y = Number(document.getElementById(`${prefix}_y`).value);
+  if (!d && !m && !y) return null;
+  if (!d || !m || !y) throw new Error('วันเกิดต้องกรอกครบทั้ง วัน เดือน ปี (หรือเว้นว่างทั้งหมด)');
+  if (y > 2400) y -= 543;                       // พิมพ์ พ.ศ. มา → แปลงเป็น ค.ศ.
+  if (y < 1900 || y > new Date().getFullYear()) throw new Error('ปีเกิดไม่ถูกต้อง (พิมพ์เป็น พ.ศ. เช่น 2510)');
+  const iso = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  if (new Date(iso + 'T00:00:00').getDate() !== d) throw new Error('วันที่ไม่ถูกต้อง (เช่น 31 ก.พ. ไม่มีจริง)');
+  return iso;
+}
+function setDob(prefix, iso) {
+  const [y, m, d] = (iso || '').split('-').map(Number);
+  document.getElementById(`${prefix}_d`).value = d || '';
+  document.getElementById(`${prefix}_m`).value = m || '';
+  document.getElementById(`${prefix}_y`).value = y ? y + 543 : '';
+  showAge(prefix);
+}
+function showAge(prefix) {
+  const host = document.getElementById(`${prefix}_age`);
+  if (!host) return;
+  try {
+    const iso = readDob(prefix);
+    host.textContent = iso ? `= ${ageOf(iso)}` : '';
+  } catch { host.textContent = ''; }
+}
+
+// ---------- ค้นหา + patient card ----------
+function showPatient(hn) {
+  api('GET', `/api/patients/${hn}`).then(p => {
+    const card = document.getElementById('patCard');
+    card.classList.remove('hidden');
+    const allergyChips = p.allergies.map(a =>
+      `<span class="chip allergy" title="${esc(a.reaction || '')}">⚠ ${esc(a.substance)}
+        <a href="#" style="color:#fff" onclick="delAllergy('${p.hn}',${a.id});return false">×</a></span>`).join(' ') || '<span class="muted">ไม่มีบันทึกแพ้ยา</span>';
+    card.innerHTML = `
+      <h2>${esc(p.prefix || '')}${esc(p.first_name)} ${esc(p.last_name || '')}
+        <span class="muted">HN ${esc(p.hn)}</span></h2>
+      <div class="stack">
+        <div>${p.sex === 'M' ? 'ชาย' : p.sex === 'F' ? 'หญิง' : esc(p.sex)} ${ageOf(p.birth_date)}
+          ${p.phone ? ' · 📞 ' + esc(p.phone) : ''}</div>
+        <div>${allergyChips}
+          <button class="btn sm" onclick="addAllergy('${p.hn}')">+ แพ้ยา</button></div>
+        ${p.chronic ? `<div class="muted">โรคประจำตัว: ${esc(p.chronic)}</div>` : ''}
+        ${p.emergency_name || p.emergency_phone ? `<div class="muted">🆘 ฉุกเฉิน: ${esc(p.emergency_name || '')} ${p.emergency_phone ? '📞 ' + esc(p.emergency_phone) : ''}</div>` : ''}
+        <label class="f"><span>มาด้วยอาการ / มาทำไม (ส่งถึงหมอ)</span>
+          <input type="text" id="enqCC" placeholder="เช่น ไข้ ไอ 2 วัน / มารับยาเดิม / ขอใบรับรองแพทย์"></label>
+        <button class="btn primary big" onclick="enqueue('${p.hn}')">🎫 เข้าคิววันนี้</button>
+        <div class="row">
+          <button class="btn" onclick="editPatient('${p.hn}')">✏️ แก้ข้อมูล</button>
+          <button class="btn" onclick="openDocuments('${p.hn}')">📄 เอกสารย้อนหลัง</button>
+          <button class="btn" onclick="uploadFile('${p.hn}')">📎 แนบผล lab</button>
+        </div>
+        <div id="attachList" class="muted"></div>
+      </div>`;
+    api('GET', `/api/patients/${hn}/attachments`).then(list => {
+      if (list.length) document.getElementById('attachList').innerHTML =
+        'ไฟล์แนบ: ' + list.map(a => `<a href="/api/attachments/${a.id}/file" target="_blank">${esc(a.filename)}</a>`).join(' · ');
+    });
+  }).catch(e => toast(e.message, true));
+}
+
+attachSearch(document.getElementById('patSearch'),
+  q => api('GET', `/api/patients/search?q=${encodeURIComponent(q)}`),
+  p => `<b>${esc(p.prefix || '')}${esc(p.first_name)} ${esc(p.last_name || '')}</b>
+        <div class="sub">HN ${esc(p.hn)} · ${p.sex === 'M' ? 'ชาย' : 'หญิง'} ${ageOf(p.birth_date)}${p.phone ? ' · ' + esc(p.phone) : ''}</div>`,
+  p => { document.getElementById('patSearch').value = ''; showPatient(p.hn); });
+
+function addAllergy(hn) {
+  openAsk({
+    title: '⚠ บันทึกแพ้ยา',
+    fields: [
+      { id: 'mSub', label: 'แพ้ยา/สารอะไร', placeholder: 'เช่น Penicillin, NSAIDs, อาหารทะเล' },
+      { id: 'mRx', label: 'อาการที่แพ้ (เว้นว่างได้)', placeholder: 'เช่น ผื่น หน้าบวม' },
+    ],
+    okText: 'บันทึกแพ้ยา',
+    onOk: v => {
+      if (!v.mSub.trim()) { toast('ใส่ชื่อยา/สารที่แพ้ก่อน', true); return; }
+      api('POST', `/api/patients/${hn}/allergies`, { substance: v.mSub.trim(), reaction: v.mRx })
+        .then(() => { closeModal(); toast('บันทึกแพ้ยาแล้ว'); showPatient(hn); }).catch(e => toast(e.message, true));
+    },
+  });
+}
+function delAllergy(hn, id) {
+  openAsk({
+    title: 'เอาบันทึกแพ้ยาออก',
+    intro: 'ประวัติเดิมยังเก็บไว้ตรวจย้อนได้เสมอ',
+    fields: [{ id: 'mReason', label: 'เหตุผลที่เอาออก', placeholder: 'เช่น บันทึกผิดคน, ทดสอบแล้วไม่แพ้จริง' }],
+    okText: 'เอาออก',
+    onOk: v => {
+      if (!v.mReason.trim()) { toast('ต้องใส่เหตุผล', true); return; }
+      api('POST', `/api/patients/${hn}/allergies/${id}/remove`, { reason: v.mReason })
+        .then(() => { closeModal(); toast('เอาออกแล้ว (เก็บประวัติไว้)'); showPatient(hn); }).catch(e => toast(e.message, true));
+    },
+  });
+}
+// แก้ข้อมูลคนไข้เป็นฟอร์มเต็ม เห็นค่าเดิมทุกช่อง (UAT C1)
+function editPatient(hn) {
+  api('GET', `/api/patients/${hn}`).then(p => {
+    const opt = (v, cur2) => `value="${v}" ${v === (cur2 || '') ? 'selected' : ''}`;
+    openModal(`<h2>✏️ แก้ข้อมูลคนไข้ <span class="muted">HN ${esc(p.hn)}</span></h2>
+      <div class="stack">
+        <div class="row">
+          <label class="f"><span>คำนำหน้า</span><select id="e_prefix">
+            ${['', 'นาย', 'นาง', 'น.ส.', 'ด.ช.', 'ด.ญ.'].map(x => `<option ${opt(x, p.prefix)}>${x}</option>`).join('')}</select></label>
+          <label class="f"><span>ชื่อ *</span><input id="e_first" value="${esc(p.first_name)}"></label>
+          <label class="f"><span>สกุล</span><input id="e_last" value="${esc(p.last_name || '')}"></label>
+        </div>
+        <div class="row">
+          <label class="f"><span>เพศ</span><select id="e_sex">
+            <option value="M" ${p.sex === 'M' ? 'selected' : ''}>ชาย</option>
+            <option value="F" ${p.sex === 'F' ? 'selected' : ''}>หญิง</option></select></label>
+          <label class="f" style="flex:1.8"><span>วันเกิด (ปี พ.ศ.)</span>
+            <span class="row" style="gap:4px;align-items:center">
+              <input type="number" id="e_birth_d" min="1" max="31" placeholder="วัน" style="width:56px">
+              <select id="e_birth_m" style="width:86px"><option value="">เดือน</option>${['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'].map((m, i) => `<option value="${i + 1}">${m}</option>`).join('')}</select>
+              <input type="number" id="e_birth_y" placeholder="พ.ศ." style="width:80px" oninput="showAge('e_birth')">
+              <span class="muted" id="e_birth_age"></span></span></label>
+          <label class="f"><span>เบอร์โทร</span><input id="e_phone" value="${esc(p.phone || '')}"></label>
+        </div>
+        <label class="f"><span>เลข ปชช.</span><input id="e_cid" value="${esc(p.citizen_id || '')}"></label>
+        <label class="f"><span>โรคประจำตัว</span><input id="e_chronic" value="${esc(p.chronic || '')}"></label>
+        <div class="row">
+          <label class="f"><span>ผู้ติดต่อฉุกเฉิน</span><input id="e_emname" value="${esc(p.emergency_name || '')}"></label>
+          <label class="f"><span>เบอร์ฉุกเฉิน</span><input id="e_emphone" value="${esc(p.emergency_phone || '')}"></label>
+        </div>
+        <label class="f"><span>ที่อยู่</span><input id="e_addr" value="${esc(p.address || '')}"></label>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" onclick="savePatientEdit('${p.hn}')">💾 บันทึกการแก้ไข</button>
+        <button class="btn" onclick="closeModal()">ยกเลิก</button></div>`);
+    setDob('e_birth', p.birth_date);
+  }).catch(e => toast(e.message, true));
+}
+function savePatientEdit(hn) {
+  try {
+    const body = {
+      prefix: document.getElementById('e_prefix').value,
+      first_name: document.getElementById('e_first').value,
+      last_name: document.getElementById('e_last').value,
+      sex: document.getElementById('e_sex').value,
+      birth_date: readDob('e_birth'),
+      phone: document.getElementById('e_phone').value,
+      citizen_id: document.getElementById('e_cid').value,
+      chronic: document.getElementById('e_chronic').value,
+      emergency_name: document.getElementById('e_emname').value,
+      emergency_phone: document.getElementById('e_emphone').value,
+      address: document.getElementById('e_addr').value,
+    };
+    if (!body.first_name.trim()) { toast('ชื่อห้ามว่าง', true); return; }
+    api('PATCH', `/api/patients/${hn}`, body)
+      .then(() => { closeModal(); toast('บันทึกการแก้ไขแล้ว'); showPatient(hn); })
+      .catch(e => toast(e.message, true));
+  } catch (e) { toast(e.message, true); }
+}
+function uploadFile(hn) {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.onchange = () => {
+    const f = inp.files[0];
+    if (!f) return;
+    // เกินเพดาน server (30MB หลังแปลง base64) จะโดนปฏิเสธอยู่แล้ว — บอกก่อนอัปโหลดดีกว่าปล่อยให้รอเก้อ
+    if (f.size > 20 * 1024 * 1024) { toast('ไฟล์ใหญ่เกิน 20 MB — กรุณาย่อรูป/แบ่งไฟล์ก่อนแนบ', true); return; }
+    const rd = new FileReader();
+    rd.onload = () => {
+      api('POST', `/api/patients/${hn}/attachments`, {
+        filename: f.name, mime: f.type, data_base64: rd.result.split(',')[1],
+      }).then(() => { toast('แนบไฟล์แล้ว'); showPatient(hn); }).catch(e => toast(e.message, true));
+    };
+    rd.readAsDataURL(f);
+  };
+  inp.click();
+}
+
+// ---------- ลงทะเบียน ----------
+// modal กลางจอ (เฟส 3): เปิดด้วยปุ่ม/ปิดด้วยปุ่ม "ปิด" หรือ Esc เมื่อยังไม่ได้กรอกอะไร — คลิกฉากหลังไม่ปิด กันข้อมูลหาย
+// op_id ต่อ "ความพยายามลงทะเบียน 1 ราย" (exactly-once): connection ขาดหลังบันทึกสำเร็จ → กดซ้ำ/แก้ช่อง/สลับปุ่ม
+// ก็ไม่เกิด HN เบิ้ล (server จำผลของ op_id ไว้ — ดู POST /api/patients; incident + codex NO-GO 2026-08-24)
+// op_id คงเดิมข้ามการปิด-เปิดฟอร์มจนกว่าจะสำเร็จหรือถูกกู้ (สร้างใหม่ตอนสำเร็จ/กู้เท่านั้น) — ปิดช่อง "เปิดฟอร์มใหม่ = op ใหม่ทั้งที่ของเดิมค้าง"
+let regOpId = null;
+document.getElementById('btnNewPat').onclick = () => {
+  document.getElementById('regBack').classList.remove('hidden');
+  if (!regOpId) regOpId = crypto.randomUUID();
+  document.getElementById('regCard').classList.remove('hidden');
+  document.getElementById('r_first').focus();
+};
+// ฟอร์มนี้ถูกบันทึกไปแล้ว (คำตอบรอบแรกไม่ถึงจอ) — พาไปที่คนไข้ที่บันทึกแล้ว ห้ามปล่อยให้ลงทะเบียนซ้ำ
+function recoverAlreadyRegistered(e) {
+  if (e.status !== 409 || !e.data || !e.data.already_registered) return false;
+  const prev = e.data.already_registered;
+  hideReg(); clearReg(); regOpId = null;
+  showPatient(prev.hn); refresh();
+  toast(e.message, true);
+  return true;
+}
+function hideReg() {
+  document.getElementById('regCard').classList.add('hidden');
+  document.getElementById('regBack').classList.add('hidden');
+  document.getElementById('btnNewPat').focus();
+}
+function regFormDirty() {
+  return ['r_first', 'r_last', 'r_phone', 'r_cid', 'r_allergy', 'r_chronic', 'r_emname', 'r_emphone', 'r_addr', 'r_cc', 'r_birth_d', 'r_birth_y']
+    .some(id => (document.getElementById(id).value || '').trim() !== '');
+}
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || document.getElementById('regBack').classList.contains('hidden')) return;
+  if (regFormDirty()) { toast('มีข้อมูลที่ยังไม่บันทึก — กด "ปิด" ถ้าต้องการทิ้งฟอร์มนี้'); return; }
+  hideReg();
+});
+function readRegForm() {
+  return {
+    prefix: document.getElementById('r_prefix').value,
+    first_name: document.getElementById('r_first').value,
+    last_name: document.getElementById('r_last').value,
+    sex: document.getElementById('r_sex').value,
+    birth_date: readDob('r_birth'),
+    phone: document.getElementById('r_phone').value,
+    citizen_id: document.getElementById('r_cid').value,
+    allergies: document.getElementById('r_allergy').value,
+    chronic: document.getElementById('r_chronic').value,
+    emergency_name: document.getElementById('r_emname').value,
+    emergency_phone: document.getElementById('r_emphone').value,
+    address: document.getElementById('r_addr').value,
+  };
+}
+// บันทึก+เข้าคิว = คำขอเดียว transaction เดียวฝั่ง server (ห้ามแยกสองคำขอ — ตายกลางทางแล้วได้คนไข้ไม่มีคิว)
+async function registerAndQueue() {
+  try {
+    if (!regOpId) regOpId = crypto.randomUUID();
+    const { hn, queue_no } = await api('POST', '/api/patients',
+      { ...readRegForm(), op_id: regOpId, queue: true, cc: document.getElementById('r_cc').value });
+    toast(`ลงทะเบียนแล้ว HN ${hn} — คิวที่ ${queue_no}`);
+    regOpId = null;
+    hideReg(); clearReg(); showPatient(hn); refresh();
+  } catch (e) { if (!recoverAlreadyRegistered(e)) toast(e.message, true); }
+}
+async function registerOnly() {
+  try {
+    if (!regOpId) regOpId = crypto.randomUUID();
+    const { hn } = await api('POST', '/api/patients', { ...readRegForm(), op_id: regOpId });
+    toast(`ลงทะเบียนแล้ว HN ${hn}`);
+    regOpId = null;
+    hideReg(); clearReg(); showPatient(hn);
+  } catch (e) { if (!recoverAlreadyRegistered(e)) toast(e.message, true); }
+}
+function clearReg() {
+  for (const id of ['r_first', 'r_last', 'r_phone', 'r_cid', 'r_allergy', 'r_chronic', 'r_emname', 'r_emphone', 'r_addr', 'r_cc',
+    'r_birth_d', 'r_birth_m', 'r_birth_y']) document.getElementById(id).value = '';
+  document.getElementById('r_sex').value = ''; document.getElementById('r_prefix').value = '';
+  document.getElementById('r_birth_age').textContent = '';
+}
+async function enqueue(hn) {
+  try {
+    const ccEl = document.getElementById('enqCC');
+    const v = await api('POST', '/api/visits', { hn, cc: ccEl ? ccEl.value : '' });
+    if (ccEl) ccEl.value = '';
+    toast(`เข้าคิวแล้ว — คิวที่ ${v.queue_no}`);
+    refresh();
+  } catch (e) { toast(e.message, true); }
+}
+
+// ---------- เอกสารย้อนหลังของคนไข้ (UAT B5/D1) ----------
+async function openDocuments(hn) {
+  try {
+    const d = await api('GET', `/api/patients/${hn}/documents`);
+    const certType = k => ({ general: 'ทั่วไป', tmc_health_th: 'สุขภาพ (แพทยสภา)', tmc_driving_th: 'ใบขับขี่', tmc_driving_en: 'ใบขับขี่ EN' }[k] || k);
+    openModal(`<h2>📄 เอกสารย้อนหลัง</h2>
+      <h3 style="margin:8px 0 2px">ใบเสร็จ (${d.receipts.length})</h3>
+      ${d.receipts.map(r => `<div class="mgr-row"><span class="nm"><b>${esc(r.receipt_no)}</b>
+          <span class="muted">· ${thDate(r.created_at)} · ${baht(r.total)} บ. · ${r.pay_method === 'cash' ? 'เงินสด' : 'โอน'}</span>
+          ${r.status === 'VOID' ? `<br><span class="muted">🚫 ยกเลิก: ${esc(r.void_reason || '')}</span>` : ''}</span>
+        <button class="btn sm" onclick="openPrintWindow('/print/receipt/${encodeURIComponent(r.receipt_no)}?copy=1','เปิดใบเสร็จ ${esc(r.receipt_no)}')">🖨️ พิมพ์สำเนา</button>
+      </div>`).join('') || '<div class="muted">ยังไม่มีใบเสร็จ</div>'}
+      <h3 style="margin:12px 0 2px">ใบรับรองแพทย์ (${d.med_certs.length})</h3>
+      ${d.med_certs.map(c => `<div class="mgr-row"><span class="nm"><b>${esc(c.cert_no)}</b>
+          <span class="muted">· ${certType(c.template_key)} · ${thDate(c.created_at)} · ${esc(c.doctor_name || '')}</span>
+          ${c.event_action ? `<br><span class="muted">🚫 ${c.event_action === 'void' ? 'ยกเลิก' : 'ออกใบใหม่แทน'}: ${esc(c.event_reason || '')}${c.replacement_cert_no ? ` → ${esc(c.replacement_cert_no)}` : ''}</span>` : ''}</span>
+        <button class="btn sm" onclick="openPrintWindow('/print/medcert/${encodeURIComponent(c.cert_no)}','เปิดใบรับรอง ${esc(c.cert_no)}')">🖨️ พิมพ์</button>
+      </div>`).join('') || '<div class="muted">ยังไม่มีใบรับรองแพทย์</div>'}
+      <div class="muted" style="margin-top:8px">ออกใบรับรองใหม่/ยกเลิกใบเดิม ทำที่จอหมอ (เปิดจากประวัติ visit ของคนไข้)</div>
+      <div class="row" style="margin-top:10px"><button class="btn" onclick="closeModal()">ปิด</button></div>`);
+  } catch (e) { toast(e.message, true); }
+}
+
+// ---------- คิว ----------
+function vitalsSummary(v) {
+  // ค่าเกินเกณฑ์ = แดง (UAT B2 — เกณฑ์เดียวกับจอหมอ)
+  const parts = [];
+  if (v.weight_kg) parts.push(`${v.weight_kg} กก.`);
+  if (v.bp_sys) parts.push(`<span class="${v.bp_sys >= 140 || (v.bp_dia || 0) >= 90 ? 'vwarn' : ''}">BP ${v.bp_sys}/${v.bp_dia || '-'}</span>`);
+  if (v.temp_c) parts.push(`<span class="${v.temp_c >= 37.8 ? 'vwarn' : ''}">${v.temp_c}°C</span>`);
+  if (v.pulse) parts.push(`<span class="${v.pulse >= 110 ? 'vwarn' : ''}">P ${v.pulse}</span>`);
+  if (v.glucose) parts.push(`<span class="${v.glucose >= 126 ? 'vwarn' : ''}">DTX ${v.glucose}</span>`);
+  return parts.join(' · ');
+}
+// ---------- เอกสารรอพิมพ์ (เครื่องพิมพ์อยู่ที่หน้าร้านเครื่องเดียว หมอออกใบที่ห้องตรวจแล้วพิมพ์เองไม่ได้) ----------
+function pendingDocBadges(v) {
+  const pending = v.pending_docs || [];
+  if (!pending.length) return '';
+  return `<div class="sub">${pending.map(d => `<button type="button" class="printwait" onclick="printPendingDoc(${v.id}, '${esc(d.doc_ref)}')"
+    title="พิมพ์แล้วเอาไปให้หมอเซ็นและปั๊มตราคลินิก">🖨️ ${esc(d.label)} รอพิมพ์${d.viewed_at ? ' (หมอเปิดดูแล้ว)' : ''}</button>`).join(' ')}</div>`;
+}
+// print event เป็น best-effort: ถ้าบันทึกไม่ได้ต้องยังพิมพ์ได้ ห้ามให้ log มาขวางกระดาษของคนไข้
+async function logPrint(docType, docRef, visitId) {
+  try { await api('POST', '/api/documents/print-event', { doc_type: docType, doc_ref: docRef, visit_id: visitId }); }
+  catch { toast('บันทึกประวัติการพิมพ์ไม่สำเร็จ — ยังพิมพ์ได้ตามปกติ', true); }
+}
+async function printPendingDoc(visitId, certNo) {
+  const printWindow = reservePrintWindow(); // ต้องจองแท็บใน gesture ก่อน await เสมอ
+  await logPrint('medcert', certNo, visitId);
+  finishPrintWindow(printWindow, `/print/medcert/${encodeURIComponent(certNo)}`, `เปิดใบรับรอง ${certNo}`);
+  if (selVisitId === visitId) await selectBill(visitId);
+  refresh();
+}
+async function printAllPending(visitId) {
+  const v = billVisit;
+  const jobs = (v.pending_docs || []).map(d => ({ type: 'medcert', ref: d.doc_ref,
+    url: `/print/medcert/${encodeURIComponent(d.doc_ref)}`, label: `เปิดใบรับรอง ${d.doc_ref}` }));
+  if (v.appointment) jobs.push({ type: 'appointment', ref: String(v.appointment.id),
+    url: `/print/appointment/${v.appointment.id}`, label: 'เปิดใบนัด' });
+  if (!jobs.length) { toast('ไม่มีเอกสารค้างพิมพ์'); return; }
+  const windows = jobs.map(() => reservePrintWindow()); // จองทุกแท็บใน gesture เดียว ก่อน await ครั้งแรก
+  for (let i = 0; i < jobs.length; i++) {
+    await logPrint(jobs[i].type, jobs[i].ref, visitId);
+    finishPrintWindow(windows[i], jobs[i].url, jobs[i].label);
+  }
+  await selectBill(visitId);
+  refresh();
+}
+function docsBlock(v) {
+  const pending = new Set((v.pending_docs || []).map(d => d.doc_ref));
+  const hostPrints = new Map();
+  for (const e of (v.print_events || [])) {
+    if (e.doc_type === 'medcert' && e.station === 'host') hostPrints.set(e.doc_ref, e);
+  }
+  const certRows = (v.med_certs || []).map(c => {
+    const printed = hostPrints.get(c.cert_no);
+    let status, cls = '';
+    if (c.action) status = c.action === 'replace' ? '🚫 ออกใบใหม่แทนแล้ว' : '🚫 ยกเลิกแล้ว';
+    else if (printed) status = `✅ พิมพ์แล้ว ${String(printed.created_at).slice(11, 16)} น. โดย ${esc(printed.printed_by_name || '')}`;
+    else { status = '⏳ รอพิมพ์'; cls = 'printwait-row'; }
+    return `<div class="qrow ${cls}"><div><b>${esc(c.cert_no)}</b><div class="sub">${status}</div></div>
+      <div class="sp"></div>
+      ${c.action ? `<a class="btn sm" href="/print/medcert/${encodeURIComponent(c.cert_no)}" target="_blank">ดู</a>`
+        : `<button class="btn sm ${pending.has(c.cert_no) ? 'primary' : ''}" onclick="printPendingDoc(${v.id}, '${esc(c.cert_no)}')">🖨️ พิมพ์</button>`}
+    </div>`;
+  }).join('');
+  const waiting = (v.pending_docs || []).length + (v.appointment ? 1 : 0);
+  if (!certRows && !v.appointment) return '';
+  return `<div class="doc-block">
+    <div><b>📄 เอกสารของ visit นี้</b> <span class="muted">— พิมพ์ที่เครื่องนี้ แล้วเอาไปให้หมอเซ็น + ปั๊มตราคลินิก</span></div>
+    ${certRows || '<div class="muted">ยังไม่มีใบรับรองแพทย์</div>'}
+    ${waiting > 1 ? `<button class="btn primary" style="width:100%" onclick="printAllPending(${v.id})">🖨️ พิมพ์ทั้งหมดที่ค้าง (${waiting} ใบ)</button>` : ''}
+  </div>`;
+}
+
+let _lastQueueHTML = '';
+let _doneOpen = false;
+const _calledIds = new Set();
+function queueRow(v, faded = false) {
+  const name = `${esc(v.prefix || '')}${esc(v.first_name)} ${esc(v.last_name || '')}`;
+  let actions = '';
+  if (v.state === 'WAITING') actions = `
+    <button class="btn sm" onclick="openVitals(${v.id})">🩺 vitals</button>
+    <button class="btn sm ghost-red" onclick="cancelVisit(${v.id})">ยกเลิก</button>`;
+  if (v.state === 'DISPENSING') actions = selVisitId === v.id
+    ? `<span class="chip st-IN_EXAM">กำลังคิดเงิน ↓</span>
+    <button class="btn sm ghost-red" onclick="cancelVisit(${v.id})">ยกเลิก</button>`
+    : `<button class="btn sm primary" onclick="selectBill(${v.id})">💰 คิดเงิน</button>
+    <button class="btn sm ghost-red" onclick="cancelVisit(${v.id})">ยกเลิก</button>`;
+  if (v.state === 'COMPLETED') actions = `
+    <button class="btn sm" onclick="selectBill(${v.id})">ดูบิล</button>`;
+  return `<div class="qrow ${selVisitId === v.id ? 'sel' : ''} ${_calledIds.has(v.id) ? 'called' : ''}" ${faded ? 'style="opacity:.75"' : ''}>
+    <div class="qno">${v.queue_no}</div>
+    <div><div class="nm">${name}</div>
+      <div class="sub">HN ${esc(v.hn)}${v.chronic ? ' · ' + esc(v.chronic) : ''} ${vitalsSummary(v) ? '· ' + vitalsSummary(v) : ''}</div>
+      ${v.cc ? `<div class="sub">💬 ${esc(v.cc)}</div>` : ''}
+      ${pendingDocBadges(v)}
+      ${v.state === 'CANCELLED' && v.cancel_reason ? `<div class="sub">🚫 ${esc(v.cancel_reason)}</div>` : ''}</div>
+    <div class="sp"></div>
+    <span class="chip st-${v.state}">${stateTH(v.state)}</span>
+    ${actions}
+  </div>
+  <div class="hidden card" id="vitals-${v.id}"></div>`;
+}
+function renderQueue() {
+  // แยกตามสถานีจริงของคลินิก (UAT รอบ 2): คอลัมน์กลาง = รอตรวจ · คอลัมน์ขวา = รอจ่ายเงิน (ติดช่องคิดเงิน)
+  // ต่อให้คิวรอตรวจ 40 คน ปุ่มคิดเงินก็ไม่ถูกดันลงล่าง
+  const host = document.getElementById('queueList');
+  const payHost = document.getElementById('payQueue');
+  const inExam = queue.filter(v => v.state === 'IN_EXAM');
+  const waiting = queue.filter(v => v.state === 'WAITING');
+  const paying = queue.filter(v => v.state === 'DISPENSING');
+  const finished = queue.filter(v => ['COMPLETED', 'CANCELLED'].includes(v.state));
+  document.getElementById('qCount').textContent =
+    `รอตรวจ ${waiting.length} · รอจ่าย ${paying.length} · เสร็จ ${queue.filter(v => v.state === 'COMPLETED').length}`;
+  document.getElementById('payCount').textContent = paying.length ? `(${paying.length} คน)` : '';
+  // กำลังตรวจปักบนสุด — เห็นว่าใครอยู่ในห้อง
+  const mainHtml =
+    ([...inExam, ...waiting].map(v => queueRow(v)).join('') || '<div class="muted">ไม่มีคิวรอตรวจ</div>')
+    + (finished.length ? `<details id="doneDetails" ${_doneOpen ? 'open' : ''} ontoggle="_doneOpen=this.open">
+        <summary style="cursor:pointer;padding:8px 4px;color:var(--dim)">✅ เสร็จสิ้น/ยกเลิกวันนี้ (${finished.length}) — กดเพื่อดู</summary>
+        ${finished.map(v => queueRow(v, true)).join('')}</details>` : '');
+  const payHtml = paying.map(v => queueRow(v)).join('') || '<div class="muted">ยังไม่มีคิวรอจ่ายเงิน</div>';
+  const all = mainHtml + '|' + payHtml;
+  if (all === _lastQueueHTML) return; // ไม่ re-render ถ้าข้อมูลไม่เปลี่ยน
+  _lastQueueHTML = all;
+  host.innerHTML = mainHtml;
+  payHost.innerHTML = payHtml;
+}
+async function openVitals(id) {
+  const v = queue.find(x => x.id === id);
+  const host = document.getElementById(`vitals-${id}`);
+  host.classList.toggle('hidden');
+  if (host.classList.contains('hidden')) return;
+  // ค่าจากครั้งก่อน: ส่วนสูงเติมให้เลย (ผู้ใหญ่ไม่เปลี่ยน) ที่เหลือโชว์เป็นตัวจาง — วันนี้วัดจริงค่อยพิมพ์ทับ
+  const { last } = await api('GET', `/api/patients/${v.hn}/last-vitals?exclude=${id}`).catch(() => ({ last: null }));
+  const ph = k => last && last[k] ? `เดิม ${last[k]}` : '';
+  const prevLine = last ? `<div class="prev-vitals">📋 ครั้งก่อน (${thDate(last.visit_date)}): ${[
+    last.weight_kg && `นน. ${last.weight_kg} กก.`, last.height_cm && `สูง ${last.height_cm} ซม.`,
+    last.bp_sys && `BP ${last.bp_sys}/${last.bp_dia || '-'}`, last.temp_c && `${last.temp_c}°C`,
+    last.pulse && `ชีพจร ${last.pulse}`].filter(Boolean).join(' · ')}</div>` : '';
+  const heightVal = v.height_cm || (last && last.height_cm) || '';
+  host.innerHTML = `<div id="vitalsForm">
+    ${prevLine}
+    <label class="f"><span>นน. (กก.)</span><input type="number" step="0.1" id="vw" value="${v.weight_kg || ''}" placeholder="${ph('weight_kg')}"></label>
+    <label class="f"><span>สูง (ซม.)</span><input type="number" id="vh" value="${heightVal}"></label>
+    <label class="f"><span>อุณหภูมิ (°C)</span><input type="number" step="0.1" id="vt" value="${v.temp_c || ''}" placeholder="${ph('temp_c')}"></label>
+    <label class="f"><span>BP ตัวบน</span><input type="number" id="vs" value="${v.bp_sys || ''}" placeholder="${ph('bp_sys')}"></label>
+    <label class="f"><span>BP ตัวล่าง</span><input type="number" id="vd" value="${v.bp_dia || ''}" placeholder="${ph('bp_dia')}"></label>
+    <label class="f"><span>ชีพจร</span><input type="number" id="vp" value="${v.pulse || ''}" placeholder="${ph('pulse')}"></label>
+    <label class="f"><span>น้ำตาล DTX (mg/dL)</span><input type="number" id="vg" value="${v.glucose || ''}" placeholder="${ph('glucose')}"></label>
+    <button class="btn primary" onclick="saveVitals(${id})">💾 บันทึก vitals</button>
+  </div>`;
+  host.querySelector('#vw').focus();
+}
+async function saveVitals(id) {
+  const g = x => { const v = document.getElementById(x).value; return v === '' ? null : Number(v); };
+  try {
+    await api('PATCH', `/api/visits/${id}/vitals`, {
+      weight_kg: g('vw'), height_cm: g('vh'), temp_c: g('vt'), bp_sys: g('vs'), bp_dia: g('vd'), pulse: g('vp'), glucose: g('vg'),
+    });
+    toast('บันทึก vitals แล้ว'); refresh();
+  } catch (e) { toast(e.message, true); }
+}
+function cancelVisit(id) {
+  const v = queue.find(x => x.id === id);
+  openAsk({
+    title: 'ยกเลิกคิว' + (v ? ` — คิวที่ ${v.queue_no} ${v.first_name}` : ''),
+    fields: [{ id: 'mReason', label: 'เหตุผลการยกเลิก', placeholder: 'เช่น คนไข้กลับก่อน, มาผิดวัน' }],
+    okText: 'ยกเลิกคิว',
+    onOk: vals => {
+      if (!vals.mReason.trim()) { toast('ต้องใส่เหตุผล', true); return; }
+      api('POST', `/api/visits/${id}/cancel`, { reason: vals.mReason })
+        .then(() => { closeModal(); toast('ยกเลิกคิวแล้ว'); if (selVisitId === id) clearBill(); refresh(); })
+        .catch(e => toast(e.message, true));
+    },
+  });
+}
+
+// กล่องนัด (UAT รอบ 2): วันนัดตัวใหญ่ให้ front อ่านบอกคนไข้ได้ทันที + ปุ่มพิมพ์ใบนัดใหญ่เท่าปุ่มใบเสร็จ
+const TH_WD = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
+function apptBox(a) {
+  const weekday = TH_WD[new Date(a.appt_date + 'T00:00:00').getDay()];
+  return `<div class="island" style="border:2px solid #2563eb;background:#eff6ff;color:#1e3a8a;border-radius:10px;padding:10px 12px">
+    <div class="muted">📅 นัดครั้งหน้า — อ่านแจ้งคนไข้ด้วย</div>
+    <div style="font-size:22px;font-weight:800">วัน${weekday}ที่ ${thDate(a.appt_date)} <span class="muted" style="font-size:14px;font-weight:400">(อีก ${a.days} วัน)</span></div>
+    ${a.note ? `<div>📝 ${esc(a.note)}</div>` : ''}
+    <button class="btn big" style="width:100%;margin-top:8px;background:#2563eb;color:#fff"
+      onclick="openPrintWindow('/print/appointment/${a.id}','เปิดใบนัด')">🖨️ พิมพ์ใบนัดให้คนไข้ถือกลับ</button>
+  </div>`;
+}
+
+// ---------- billing ----------
+// op_id ต่อ "ความพยายามเก็บเงิน 1 บิล" (exactly-once — ดู POST /api/visits/:id/pay):
+// connection ขาดหลังออกใบเสร็จสำเร็จ → กดซ้ำได้ใบเสร็จเดิม ไม่เก็บเงินซ้ำ · เลือกบิลใหม่ = ความพยายามใหม่
+let payOpId = null;
+async function selectBill(id) {
+  selVisitId = id;
+  billVisit = await api('GET', `/api/visits/${id}`);
+  billLines = billVisit.order ? JSON.parse(JSON.stringify(billVisit.order.lines)) : [];
+  billDirty = false;
+  payOpId = crypto.randomUUID();
+  renderBill();
+  renderQueue();
+}
+function clearBill() {
+  selVisitId = null; billVisit = null;
+  document.getElementById('billBody').classList.add('hidden');
+  document.getElementById('billEmpty').classList.remove('hidden');
+}
+function billTotal() {
+  const sub = billLines.reduce((s, l) => s + l.qty * l.price_each, 0);
+  const disc = Number(document.getElementById('b_discount')?.value || 0);
+  return { sub, disc, total: Math.max(0, sub - disc) };
+}
+function renderBill() {
+  const host = document.getElementById('billBody');
+  document.getElementById('billEmpty').classList.add('hidden');
+  host.classList.remove('hidden');
+  const v = billVisit;
+  const name = `${esc(v.patient.prefix || '')}${esc(v.patient.first_name)} ${esc(v.patient.last_name || '')}`;
+  const allergy = v.patient.allergies.map(a => `<span class="chip allergy">⚠ ${esc(a.substance)}</span>`).join(' ');
+  const note = v.note_versions[v.note_versions.length - 1];
+
+  if (v.state === 'COMPLETED' || v.state === 'CANCELLED') { renderBillDone(host, v, name); return; }
+
+  host.innerHTML = `
+    <div class="stack">
+      <div class="bill-head"><b>คิว ${v.queue_no}</b> — ${name} <span class="muted">HN ${esc(v.hn)}</span> ${allergy}</div>
+      ${note && note.dx_text ? `<div class="muted">Dx: ${esc(note.dx_text)}</div>` : ''}
+      <div class="blines" id="billTable">
+        ${billLines.map((l, i) => l.type === 'discount' ? `
+          <div class="bline disc island"><div class="bl-head"><span class="bl-name">➖ ส่วนลด: ${esc(l.name)} <span class="muted">(หมอให้)</span></span>
+            <b class="money">-${baht(Math.abs(l.price_each))}</b>
+            <button class="btn sm ghost-red" onclick="rmLine(${i})" title="เอาส่วนลดออก">✕</button></div></div>` : `
+          <div class="bline"><div class="bl-head"><span class="bl-name">${esc(l.name)}</span><b class="money">${baht(l.qty * l.price_each)}</b></div>
+            ${l.instructions ? `<div class="bl-instr muted">${esc(l.instructions)}</div>` : ''}
+            <div class="bl-ctl"><input type="number" min="0.5" step="0.5" value="${l.qty}"
+              ${l.type === 'drug' ? `max="${(billVisit.order.lines.find(x => x.type === 'drug' && x.ref_id === l.ref_id) || l).qty}"` : ''}
+              onchange="chgQty(${i}, this.value)" title="พิมพ์จำนวนจ่ายจริงได้เลย">
+              <span class="muted">${esc(l.unit || 'หน่วย')} × ${baht(l.price_each)}</span><span class="sp"></span>
+              ${l.type === 'drug' ? '<span class="muted">ยาตามคำสั่งแพทย์</span>' : `<button class="btn sm ghost-red" onclick="rmLine(${i})" title="ลบรายการ">✕</button>`}</div></div>`).join('')}
+      </div>
+      <div class="searchwrap"><input type="text" id="billAddItem" placeholder="＋ เพิ่มค่าบริการ..."></div>
+      ${billVisit.appointment ? apptBox(billVisit.appointment) : ''}
+      <div class="row">
+        <label class="f"><span>ส่วนลดเพิ่มเติม (บาท)</span><input type="number" id="b_discount" value="0" min="0" onchange="renderTotals()"></label>
+        <label class="f"><span>เหตุผลส่วนลด</span><input type="text" id="b_discount_reason"></label>
+      </div>
+      <label class="f"><span>วิธีชำระ</span>
+        <select id="b_method" onchange="renderPaymentFields()"><option value="cash">เงินสด</option><option value="transfer">โอน</option></select></label>
+      <div class="net-line"><span class="muted">ยอดสุทธิ</span><b class="pay-total money" id="b_total"></b></div>
+      <div id="cashFields" class="row">
+        <label class="f"><span>รับเงินสด (บาท)</span><input type="number" id="b_cash_received" min="0" step="0.01" oninput="renderTotals()" placeholder="เว้นว่าง = รับพอดี"></label>
+        <div class="grow"><div class="muted right">เงินทอน</div><div class="money right" id="b_change">0.00 บาท</div></div>
+      </div>
+      <label class="f hidden" id="transferFields"><span>เลขอ้างอิงการโอน (ถ้ามี)</span><input type="text" id="b_transfer_ref" maxlength="200"></label>
+      <details><summary>ออกใบเสร็จในนามบุคคล/บริษัท (ถ้ามี)</summary>
+        <div class="stack mt">
+          <p class="muted">ถ้าเว้นชื่อ ระบบจะออกในชื่อผู้ป่วย ข้อมูลนี้ไม่เปลี่ยนเวชระเบียน</p>
+          <label class="f"><span>ชื่อผู้ชำระ/บริษัท</span><input type="text" id="b_payer_name"></label>
+          <label class="f"><span>ที่อยู่</span><textarea id="b_payer_address" rows="2"></textarea></label>
+          <label class="f"><span>เลขประจำตัวผู้เสียภาษี (13 หลัก)</span><input type="text" id="b_payer_tax_id" inputmode="numeric" maxlength="13"></label>
+        </div>
+      </details>
+      <div id="editReasonBox" class="hidden">
+        <label class="f"><span>⚠ มีการแก้รายการจากที่หมอสั่ง — ระบุเหตุผล (หมอจะเห็นและกดรับทราบ)</span>
+        <input type="text" id="b_edit_reason" placeholder="เช่น ยา X หมด เปลี่ยนจำนวน"></label>
+      </div>
+      ${docsBlock(v)}
+      <button class="btn green big" onclick="doPay()">💵 รับเงิน + พิมพ์ใบเสร็จ</button>
+    </div>`;
+  attachSearch(document.getElementById('billAddItem'),
+    q => api('GET', `/api/items/search?q=${encodeURIComponent(q)}`).then(xs => xs.filter(x => x.type === 'service')),
+    it => `<b>${esc(it.name)}</b> <span class="sub">ค่าบริการ · ${baht(it.price)} บ.</span>`,
+    it => {
+      billLines.push({ type: it.type, ref_id: it.id, name: it.name, qty: 1, unit: it.unit, price_each: it.price, instructions: it.default_instructions || '' });
+      markDirty(); renderBill();
+    });
+  renderTotals(); renderPaymentFields();
+  // บิลกางใต้รายชื่อในการ์ดเดียวกัน (F2) — พาสายตาลงมาที่บิลของคนที่เพิ่งกด
+  host.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+function renderTotals() {
+  const { total } = billTotal();
+  const el = document.getElementById('b_total');
+  if (el) el.textContent = baht(total) + ' บาท';
+  const receivedEl = document.getElementById('b_cash_received');
+  const changeEl = document.getElementById('b_change');
+  if (receivedEl && changeEl) {
+    const received = receivedEl.value === '' ? total : Number(receivedEl.value);
+    changeEl.textContent = baht(Math.max(0, (Number.isFinite(received) ? received : 0) - total)) + ' บาท';
+  }
+}
+function renderPaymentFields() {
+  const cash = document.getElementById('b_method') && document.getElementById('b_method').value === 'cash';
+  const cashFields = document.getElementById('cashFields'), transferFields = document.getElementById('transferFields');
+  if (cashFields) cashFields.classList.toggle('hidden', !cash);
+  if (transferFields) transferFields.classList.toggle('hidden', cash);
+  renderTotals();
+}
+function markDirty() {
+  billDirty = true;
+  const box = document.getElementById('editReasonBox');
+  if (box && ME.role === 'front') box.classList.remove('hidden');
+}
+function chgQty(i, val) {
+  const line = billLines[i], next = Number(val) || 1;
+  if (line.type === 'drug') {
+    const prescribed = billVisit.order.lines.find(x => x.type === 'drug' && x.ref_id === line.ref_id);
+    if (prescribed && next > prescribed.qty) { toast('เพิ่มจำนวนยาเกินคำสั่งแพทย์ไม่ได้', true); line.qty = prescribed.qty; renderBill(); return; }
+    if (line.dose) line.dose.qty_source = 'manual';
+  }
+  line.qty = next;
+  markDirty(); renderBill();
+}
+function rmLine(i) {
+  if (billLines[i].type === 'drug') { toast('หน้าคลินิกลบยาไม่ได้ กรุณาส่งกลับให้แพทย์แก้', true); return; }
+  billLines.splice(i, 1); markDirty(); renderBill();
+}
+
+async function doPay() {
+  let ovId = billVisit.order ? billVisit.order.id : null;
+  const reason = ME.role === 'front' && (billDirty || !ovId) ? document.getElementById('b_edit_reason').value : null;
+  if (ME.role === 'front' && (billDirty || !ovId) && !reason) { toast('ระบุเหตุผลการแก้รายการก่อน', true); return; }
+  const printWindow = reservePrintWindow();
+  try {
+    if (billDirty || !ovId) {
+      const ov = await api('POST', `/api/visits/${billVisit.id}/orders`,
+        { lines: billLines, base_version_id: ovId, edit_reason: reason });
+      ovId = ov.id;
+    }
+    const { disc } = billTotal();
+    if (!payOpId) payOpId = crypto.randomUUID();
+    const r = await api('POST', `/api/visits/${billVisit.id}/pay`, {
+      op_id: payOpId,
+      order_version_id: ovId,
+      discount: disc,
+      discount_reason: document.getElementById('b_discount_reason').value,
+      pay_method: document.getElementById('b_method').value,
+      cash_received: document.getElementById('b_cash_received').value,
+      transfer_ref: document.getElementById('b_transfer_ref').value,
+      payer: {
+        name: document.getElementById('b_payer_name').value,
+        address: document.getElementById('b_payer_address').value,
+        tax_id: document.getElementById('b_payer_tax_id').value,
+      },
+    });
+    payOpId = null;
+    toast(`รับเงินแล้ว — ใบเสร็จ ${r.receiptNo}`);
+    await logPrint('receipt', r.receiptNo, billVisit.id);
+    finishPrintWindow(printWindow, `/print/receipt/${r.receiptNo}`, `เปิดใบเสร็จ ${r.receiptNo}`);
+    await selectBill(billVisit.id);
+    refresh();
+  } catch (e) {
+    closeReservedPrintWindow(printWindow);
+    toast(e.message, true);
+    if (e.status === 409) await selectBill(billVisit.id); // รายการเปลี่ยน → โหลดล่าสุดมาให้ดูใหม่
+  }
+}
+
+function renderBillDone(host, v, name) {
+  const issued = v.receipts.filter(r => r.status === 'ISSUED');
+  const voided = v.receipts.filter(r => r.status === 'VOID');
+  host.innerHTML = `<div class="stack">
+    <div><b>คิว ${v.queue_no}</b> — ${name} <span class="chip st-${v.state}">${stateTH(v.state)}</span></div>
+    ${issued.map(r => `<div class="qrow"><div><b>${esc(r.receipt_no)}</b>
+      <div class="sub">${thDate(r.created_at)} · ${r.pay_method === 'cash' ? 'เงินสด' : 'โอน'}</div></div>
+      <div class="sp"></div><div class="money"><b>${baht(r.total)}</b> บ.</div>
+      <button class="btn sm" onclick="openPrintWindow('/print/receipt/${r.receipt_no}?copy=1','เปิดใบเสร็จ ${esc(r.receipt_no)}')">🖨️ พิมพ์สำเนา</button>
+      <button class="btn sm" onclick="startReissue('${r.receipt_no}')">แก้บิล</button>
+      <button class="btn sm ghost-red" onclick="doRefund('${r.receipt_no}')">คืนเงิน</button></div>`).join('')}
+    ${voided.map(r => `<div class="muted">🚫 ${esc(r.receipt_no)} ยกเลิก (${esc(r.void_reason || '')})
+      <a href="/print/receipt/${r.receipt_no}?copy=1" target="_blank">ดู</a></div>`).join('')}
+    ${docsBlock(v)}
+    ${v.appointment ? apptBox(v.appointment) : ''}
+    <button class="btn" onclick="clearBill()">ปิด</button>
+  </div>`;
+}
+
+function startReissue(receiptNo) {
+  openModal(`<h2>แก้บิล ${esc(receiptNo)}</h2>
+    <div class="muted">ใบเดิมจะถูกยกเลิก (ยังดูย้อนได้) แล้วออกใบใหม่แทน — ตามกติกาเอกสารการเงิน ห้ามลบทิ้งเงียบๆ</div>
+    <label class="f" style="margin-top:8px"><span>เหตุผลการแก้บิล</span>
+      <input id="mVoidReason" placeholder="เช่น คิดราคาผิด, ลืมใส่ค่าทำแผล" style="width:100%"></label>
+    <div style="margin-top:8px"><b>ยาตามบิลเดิมอยู่ที่ไหน?</b>
+      <label style="display:block;margin-top:4px"><input type="radio" name="mReturned" value="0" checked>
+        คนไข้ถือยาไปแล้ว / แก้แค่ตัวเลข (ไม่ยุ่งกับคลังยา)</label>
+      <label style="display:block"><input type="radio" name="mReturned" value="1">
+        ยากลับมาอยู่ที่คลินิกจริง (คืนยอดเข้าคลัง)</label></div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn primary" onclick="startReissueConfirm('${esc(receiptNo)}')">ไปหน้าแก้รายการ</button>
+      <button class="btn" onclick="closeModal()">ยกเลิก</button></div>`);
+  document.getElementById('mVoidReason').focus();
+}
+async function startReissueConfirm(receiptNo) {
+  const reason = document.getElementById('mVoidReason').value.trim();
+  if (!reason) { toast('ใส่เหตุผลการแก้บิลก่อน', true); return; }
+  const returned = document.querySelector('input[name="mReturned"]:checked').value === '1';
+  closeModal();
+  const r = await api('GET', `/api/receipts/${receiptNo}`);
+  billVisit = await api('GET', `/api/visits/${r.visit_id}`);
+  billLines = r.lines.map(l => ({ type: l.line_type, ref_id: l.ref_id, name: l.name, qty: l.qty, unit: l.unit, price_each: l.price_each, instructions: l.instructions }));
+  window._reissue = { receiptNo, reason, returned, oldDiscount: r.discount, oldReason: r.discount_reason };
+  renderReissue(r);
+}
+function renderReissue(oldR) {
+  const host = document.getElementById('billBody');
+  document.getElementById('billEmpty').classList.add('hidden');
+  host.classList.remove('hidden');
+  host.innerHTML = `<div class="stack">
+    <div class="warn-box">แก้บิล ${esc(oldR.receipt_no)} — ใบเดิมจะถูกยกเลิก ออกใบใหม่แทน</div>
+    <table class="t">
+      <tr><th>รายการ</th><th class="num">จำนวน</th><th class="num">ราคา</th><th></th></tr>
+      ${billLines.map((l, i) => `<tr><td>${esc(l.name)}</td>
+        <td class="num"><input type="number" min="0.5" step="0.5" value="${l.qty}" style="width:70px"
+          onchange="billLines[${i}].qty=Number(this.value)||1;renderReissue(${JSON.stringify(oldR).replace(/"/g, '&quot;')})"></td>
+        <td class="num money">${baht(l.price_each)}</td>
+        <td><button class="btn sm ghost-red" onclick="billLines.splice(${i},1);renderReissue(${JSON.stringify(oldR).replace(/"/g, '&quot;')})">×</button></td></tr>`).join('')}
+    </table>
+    <div class="searchwrap"><input type="text" id="reAddItem" placeholder="＋ เพิ่มรายการ..."></div>
+    <div class="row">
+      <label class="f"><span>ส่วนลด</span><input type="number" id="re_discount" value="${window._reissue.oldDiscount || 0}" min="0"></label>
+      <label class="f"><span>เหตุผลส่วนลด</span><input type="text" id="re_discount_reason" value="${esc(window._reissue.oldReason || '')}"></label>
+    </div>
+    <button class="btn green big" onclick="doReissue()">ออกใบเสร็จใหม่</button>
+    <button class="btn" onclick="clearBill()">ยกเลิกการแก้</button>
+  </div>`;
+  attachSearch(document.getElementById('reAddItem'),
+    q => api('GET', `/api/items/search?q=${encodeURIComponent(q)}`),
+    it => `<b>${esc(it.name)}</b> <span class="sub">${baht(it.price)} บ.</span>`,
+    it => { billLines.push({ type: it.type, ref_id: it.id, name: it.name, qty: 1, unit: it.unit, price_each: it.price }); renderReissue(oldR); });
+}
+async function doReissue() {
+  const printWindow = reservePrintWindow();
+  try {
+    const { receiptNo, reason, returned } = window._reissue;
+    const r = await api('POST', `/api/receipts/${receiptNo}/void-reissue`, {
+      new_lines: billLines, returned_stock: returned, void_reason: reason,
+      discount: Number(document.getElementById('re_discount').value || 0),
+      discount_reason: document.getElementById('re_discount_reason').value,
+    });
+    toast(`ออกใบใหม่แล้ว ${r.receiptNo}`);
+    finishPrintWindow(printWindow, `/print/receipt/${r.receiptNo}`, `เปิดใบเสร็จ ${r.receiptNo}`);
+    clearBill(); refresh();
+  } catch (e) { closeReservedPrintWindow(printWindow); toast(e.message, true); }
+}
+function doRefund(receiptNo) {
+  openModal(`<h2>คืนเงินเต็มจำนวน — ${esc(receiptNo)}</h2>
+    <div class="muted">ใบเสร็จจะถูกยกเลิกและ visit ถูกยกเลิกด้วย (ประวัติยังอยู่ครบ)</div>
+    <label class="f" style="margin-top:8px"><span>เหตุผลการคืนเงิน</span>
+      <input id="mRefundReason" placeholder="เช่น คนไข้เปลี่ยนใจไม่รับยา" style="width:100%"></label>
+    <div style="margin-top:8px"><b>ยาถูกคืนกลับมาที่คลินิกไหม?</b>
+      <label style="display:block;margin-top:4px"><input type="radio" name="mRefReturned" value="1" checked>
+        คืนจริง (ยอดยากลับเข้าคลัง)</label>
+      <label style="display:block"><input type="radio" name="mRefReturned" value="0">
+        ไม่คืน (คนไข้ถือไปแล้ว)</label></div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn ghost-red" onclick="doRefundConfirm('${esc(receiptNo)}')">ยืนยันคืนเงิน</button>
+      <button class="btn" onclick="closeModal()">ยกเลิก</button></div>`);
+  document.getElementById('mRefundReason').focus();
+}
+function doRefundConfirm(receiptNo) {
+  const reason = document.getElementById('mRefundReason').value.trim();
+  if (!reason) { toast('ใส่เหตุผลการคืนเงินก่อน', true); return; }
+  const returned = document.querySelector('input[name="mRefReturned"]:checked').value === '1';
+  api('POST', `/api/receipts/${receiptNo}/refund`, { reason, returned_stock: returned })
+    .then(r => { closeModal(); toast(`คืนเงิน ${baht(r.refund_amount)} บาทแล้ว`); clearBill(); refresh(); })
+    .catch(e => toast(e.message, true));
+}
+
+// ---------- stale (ตกค้างข้ามวัน) ----------
+function renderStale(list) {
+  const box = document.getElementById('staleBox');
+  if (!list.length) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  box.innerHTML = `<b>⏰ มี visit ตกค้าง ${list.length} รายการ (ข้ามวัน):</b> ` + list.map(v =>
+    `${esc(v.first_name)} (${esc(v.visit_date)} คิว ${v.queue_no}, ${stateTH(v.state)})
+     <button class="btn sm ghost-red" onclick="cancelVisit(${v.id})">ยกเลิก</button>
+     ${v.state === 'DISPENSING' ? `<button class="btn sm" onclick="selectBill(${v.id})">คิดเงิน</button>` : ''}`).join(' | ');
+}
+
+// ---------- poll ----------
+const _prevStates = {};
+const _seenPendingDocs = new Set();
+async function refresh() {
+  const data = await api('GET', '/api/queue');
+  // หมอออกใบรับรองที่ห้องตรวจ → หน้าร้านต้องรู้ทันทีว่ามีกระดาษต้องพิมพ์ (กลไกเดียวกับ "หมอเรียกคิว")
+  const fresh = [];
+  for (const v of data.queue) {
+    for (const d of (v.pending_docs || [])) {
+      if (_seenPendingDocs.has(d.doc_ref)) continue;
+      _seenPendingDocs.add(d.doc_ref);
+      fresh.push(v);
+    }
+  }
+  if (fresh.length === 1) toast(`🖨️ หมอออกใบรับรองให้คิวที่ ${fresh[0].queue_no} — พิมพ์ได้ที่ช่องคิดเงิน`);
+  else if (fresh.length > 1) toast(`🖨️ มีใบรับรอง ${fresh.length} ใบรอพิมพ์ — กดที่ป้ายบนคิว หรือช่องคิดเงิน`);
+  // หมอกดเรียกตรวจ → เด้งบอกหน้าร้านให้เรียกคนไข้เข้าห้อง (UAT B6)
+  for (const v of data.queue) {
+    if (_prevStates[v.id] === 'WAITING' && v.state === 'IN_EXAM') {
+      toast(`🔔 หมอเรียกคิวที่ ${v.queue_no} — ${v.prefix || ''}${v.first_name} เข้าห้องตรวจ`);
+      _calledIds.add(v.id);
+      setTimeout(() => { _calledIds.delete(v.id); _lastQueueHTML = ''; renderQueue(); }, 15000);
+    }
+    _prevStates[v.id] = v.state;
+  }
+  queue = data.queue;
+  renderQueue();
+  renderStale(data.stale);
+  renderBackupBanner(data.backup);
+}
+initPage('front').then(me => {
+  if (!me) return;
+  poll(refresh, 3000);
+  // มาจากหน้ารายงานด้วยลิงก์ "แก้บิล" — เปิด flow แก้บิลให้ทันที (UAT รอบ 2)
+  const reissueNo = new URLSearchParams(location.search).get('reissue');
+  if (reissueNo) {
+    history.replaceState(null, '', '/');
+    startReissue(reissueNo);
+  }
+});
+</script>
+<!-- ลงทะเบียนคนไข้ใหม่ = modal กลางจอ (Claude Design handoff เฟส 3, เจ้าของเลือกเพราะลด friction สายตาในคอลัมน์ซ้าย) — id/ฟิลด์เดิมทั้งหมด JS/test ไม่เปลี่ยน · ไม่ปิดเมื่อคลิกฉากหลัง (กันข้อมูลที่กรอกหาย) -->
+<div id="regBack" class="hidden">
+  <div class="modal-box reg-modal hidden" id="regCard" role="dialog" aria-modal="true" aria-labelledby="regTitle">
+    <h2 id="regTitle">➕ ลงทะเบียนคนไข้ใหม่ <button class="btn sm" type="button" onclick="hideReg()">ปิด</button></h2>
+    <div class="stack">
+      <div class="row reg-name-row">
+        <label class="f" style="flex:0 0 70px"><span>คำนำ</span>
+          <select id="r_prefix"><option value=""></option><option>นาย</option><option>นาง</option><option>น.ส.</option><option>ด.ช.</option><option>ด.ญ.</option></select></label>
+        <label class="f"><span>ชื่อ *</span><input type="text" id="r_first"></label>
+        <label class="f"><span>สกุล</span><input type="text" id="r_last"></label>
+      </div>
+      <div class="row reg-demographics-row">
+        <label class="f" style="flex:0 0 90px"><span>เพศ *</span>
+          <select id="r_sex"><option value="">--</option><option value="M">ชาย</option><option value="F">หญิง</option></select></label>
+        <label class="f reg-birth"><span>วันเกิด (ปี พ.ศ.)</span>
+          <span class="row reg-birth-fields" style="gap:4px;align-items:center">
+            <input type="number" id="r_birth_d" min="1" max="31" placeholder="วัน" style="width:56px">
+            <select id="r_birth_m" style="width:86px"><option value="">เดือน</option><option value="1">ม.ค.</option><option value="2">ก.พ.</option><option value="3">มี.ค.</option><option value="4">เม.ย.</option><option value="5">พ.ค.</option><option value="6">มิ.ย.</option><option value="7">ก.ค.</option><option value="8">ส.ค.</option><option value="9">ก.ย.</option><option value="10">ต.ค.</option><option value="11">พ.ย.</option><option value="12">ธ.ค.</option></select>
+            <input type="number" id="r_birth_y" placeholder="พ.ศ." style="width:80px" oninput="showAge('r_birth')">
+            <span class="muted" id="r_birth_age"></span>
+          </span></label>
+        <label class="f"><span>เบอร์โทร</span><input type="text" id="r_phone"></label>
+      </div>
+      <div class="row">
+        <label class="f"><span>เลข ปชช.</span><input type="text" id="r_cid"></label>
+        <label class="f"><span>โรคประจำตัว</span><input type="text" id="r_chronic"></label>
+      </div>
+      <label class="f"><span>แพ้ยา (คั่นด้วย , ถ้ามีหลายตัว)</span><input type="text" id="r_allergy" placeholder="เว้นว่างถ้าไม่แพ้"></label>
+      <div class="row">
+        <label class="f"><span>ผู้ติดต่อฉุกเฉิน</span><input type="text" id="r_emname" placeholder="ชื่อ + ความสัมพันธ์"></label>
+        <label class="f"><span>เบอร์ฉุกเฉิน</span><input type="text" id="r_emphone"></label>
+      </div>
+      <label class="f"><span>ที่อยู่</span><input type="text" id="r_addr"></label>
+      <label class="f"><span>มาด้วยอาการ / มาทำไม (ส่งถึงหมอ — กรณีเข้าคิวเลย)</span><input type="text" id="r_cc" placeholder="เช่น ไข้ ไอ 2 วัน / ขอใบรับรองแพทย์"></label>
+    </div>
+    <div class="row reg-actions">
+      <button class="btn primary big" onclick="registerAndQueue()">💾 บันทึก + เข้าคิวเลย</button>
+      <button class="btn" onclick="registerOnly()">บันทึกอย่างเดียว (ยังไม่เข้าคิว)</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

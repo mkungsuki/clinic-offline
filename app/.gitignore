@@ -1,0 +1,9 @@
+/data/
+/.ui-test-data/
+/node_modules/
+*.db
+*.db-wal
+*.db-shm
+*.enc
+*.log
+*private*.pem

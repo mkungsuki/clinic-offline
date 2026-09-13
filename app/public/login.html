@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>เข้าสู่ระบบ — ระบบคลินิก</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--topbar); }
+  .login-card { background: var(--card); border-radius: var(--r-modal); padding: 36px; width: 360px; box-shadow: var(--modal-shadow); animation: cardIn .3s ease both; }
+  .login-card h1 { margin: 0 0 4px; font-size: 22px; }
+</style>
+</head>
+<body>
+<div class="login-card stack">
+  <h1>🏥 ระบบคลินิก</h1>
+  <p class="muted" id="clinicName">เข้าสู่ระบบเพื่อใช้งาน</p>
+  <div id="restartNote" class="hidden" style="background:#fff4c8;border:1px solid #d5a516;border-radius:10px;padding:10px 12px;font-size:.95rem">
+    🔄 โปรแกรมเพิ่งรีสตาร์ทหลังตั้งค่าเครื่องห้องตรวจ จึงต้องเข้าระบบใหม่ — <b>เป็นเรื่องปกติ</b> เข้าด้วยบัญชีผู้ดูแลแล้วระบบจะพากลับไปหน้าตั้งค่าให้เอง
+  </div>
+  <label class="f"><span>ชื่อผู้ใช้</span><input type="text" id="u" autofocus autocomplete="username"></label>
+  <label class="f"><span>รหัสผ่าน</span><input type="password" id="p" autocomplete="current-password"></label>
+  <button class="btn primary big" id="go">เข้าสู่ระบบ</button>
+  <div class="muted" id="msg"></div>
+  <div class="muted" style="text-align:right">พื้นหลัง: <select class="theme-pick" style="color:var(--ink);background:var(--card);border-color:var(--line)" onchange="setTheme(this.value)"><option value="light">สว่าง</option><option value="soft">นวล</option><option value="dark">มืด</option></select></div>
+  <div class="muted" style="font-size:.85rem">โปรแกรมมีปัญหา? <a href="/api/support-report" download>🆘 ดาวน์โหลดรายงานปัญหา</a> (จากเครื่องหลัก) — ตรวจและปิดชื่อผู้ใช้ ชื่อเครื่อง และที่อยู่โฟลเดอร์ก่อนแนบที่ github.com/mkungsuki/clinic-offline/issues ห้ามแนบข้อมูลคนไข้หรือกุญแจกู้</div>
+</div>
+<script src="/common.js"></script>
+<script>
+async function doLogin() {
+  const msg = document.getElementById('msg');
+  msg.textContent = '';
+  try {
+    const r = await api('POST', '/api/login', {
+      username: document.getElementById('u').value,
+      password: document.getElementById('p').value,
+    });
+    // กลับไปหน้าที่ค้างไว้ (ตอนนี้ใช้กับ "หลังตั้งค่าเครื่องห้องตรวจ" — server รีสตาร์ทแล้ว session หาย) เฉพาะ path ในเว็บนี้ + role ที่มีสิทธิ์
+    const after = localStorage.getItem('clinic_after_login') || '';
+    localStorage.removeItem('clinic_after_login');
+    if (after === '/admin.html' && r.role === 'admin') { location.href = after; return; }
+    location.href = r.role === 'doctor' ? '/exam.html' : '/';
+  } catch (e) { msg.textContent = '❌ ' + e.message; }
+}
+if (localStorage.getItem('clinic_after_login') === '/admin.html') {
+  const note = document.getElementById('restartNote');
+  // หลังอัปเดตรุ่น: server เปิดใหม่ session หาย — ข้อความต้องบอกว่าเป็นขั้นตอนปกติของการอัปเดต ไม่ใช่ของตั้งค่าเครื่องห้องตรวจ
+  if (localStorage.getItem('clinic_after_login_reason') === 'update') {
+    note.innerHTML = '✅ โปรแกรมอัปเดตรุ่นแล้วและเพิ่งเปิดใหม่ จึงต้องเข้าระบบอีกครั้ง — <b>เป็นเรื่องปกติ</b> เข้าด้วยบัญชีผู้ดูแลแล้วระบบจะพากลับไปหน้าตั้งค่าพร้อมแสดงผลอัปเดต';
+  }
+  localStorage.removeItem('clinic_after_login_reason');
+  localStorage.removeItem('clinic_relogin_notice');
+  note.classList.remove('hidden');
+} else if (localStorage.getItem('clinic_relogin_notice') === '1') {
+  // ถูกดีดมาจากหน้าที่ login อยู่ (server เพิ่งรีสตาร์ท เช่น supervisor เปิดกลับหลัง crash) — ห้ามเด้งเงียบ (blind test 2026-08-24)
+  localStorage.removeItem('clinic_relogin_notice');
+  const note = document.getElementById('restartNote');
+  note.innerHTML = '🔄 โปรแกรมที่เครื่องหลักเพิ่งเริ่มทำงานใหม่ จึงต้องเข้าสู่ระบบอีกครั้ง — <b>เป็นเรื่องปกติ</b> ข้อมูลที่บันทึกไว้แล้วไม่หายไปไหน ถ้าเกิดบ่อยให้กด "🆘 แจ้งปัญหา" ส่งไฟล์ให้ผู้ดูแล';
+  note.classList.remove('hidden');
+}
+document.getElementById('go').addEventListener('click', doLogin);
+document.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+</script>
+</body>
+</html>
