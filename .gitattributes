@@ -1,0 +1,4 @@
+# .cmd ต้องเป็น CRLF เสมอ — cmd.exe parse ไฟล์ LF-only เพี้ยน (บล็อกวงเล็บ/ภาษาไทย)
+# บทเรียนจริง 2026-08-11: ดับเบิลคลิก launcher แล้วไม่ทำงานเพราะไฟล์เป็น LF
+*.cmd text eol=crlf
+*.bat text eol=crlf
