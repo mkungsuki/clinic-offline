@@ -515,6 +515,10 @@ try {
   // ถอย schema ทีละขั้นจากรุ่นล่าสุด — เพิ่ม migration ใหม่ต้องเพิ่มขั้นตอนถอยที่นี่คู่กันเสมอ
   // (ย้อนเฉพาะ "สิ่งที่รุ่นนั้นเพิ่ม" ไม่ใช่ลบทั้งฐาน เพื่อให้ migrate ขาขึ้นเจอสภาพจริงของเครื่องเก่า)
   const DOWNGRADE_STEPS = {
+    17: `ALTER TABLE drugs DROP COLUMN default_dose_json;`,
+    16: `ALTER TABLE services DROP COLUMN cost;`,
+    15: `ALTER TABLE appointments DROP COLUMN doctor_id; ALTER TABLE visits DROP COLUMN preferred_doctor_id;`,
+    14: `DROP TABLE appointment_events;`,
     13: `DROP TABLE drug_lots; ALTER TABLE drugs DROP COLUMN expiry_warn_days;`,
     12: `DROP TABLE client_ops;`,
     11: `DROP TABLE auth_events; DROP TABLE access_log;`,
@@ -538,7 +542,7 @@ try {
     assert.equal(userVersion(dir), target);
   }
 
-  for (const from of [9, 8]) {
+  for (const from of [16, 15, 14, 13, 9, 8]) {
     test(`migration สังเคราะห์ ${from}→${SCHEMA_VERSION} ผ่าน, ซ้ำแล้ว idempotent, และ migrate-and-verify ตรวจ/ปฏิเสธถูก`, () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), `clinic-migrate-${from}to${SCHEMA_VERSION}-`));
       try {
@@ -640,7 +644,7 @@ try {
     try {
       const authModule = path.join(__dirname, 'lib', 'auth.js');
       const create = spawnSync(process.execPath, ['--no-warnings', '-e',
-        `const a=require(${JSON.stringify(authModule)});process.stdout.write(a.createSession({id:7,role:'doctor',display_name:'หมอทดสอบ'},'127.0.0.1'));`],
+        `const a=require(${JSON.stringify(authModule)});a.createUser({username:'synthetic',displayName:'หมอทดสอบ',role:'doctor',password:'Synthetic-test-123'});process.stdout.write(a.createSession(a.login('synthetic','Synthetic-test-123'),'127.0.0.1'));`],
       { env: childEnv(dir), encoding: 'utf8' });
       assert.equal(create.status, 0, create.stderr);
       const cookie = create.stdout.trim();
@@ -649,7 +653,7 @@ try {
       const read = spawnSync(process.execPath, ['--no-warnings', '-e', readScript],
         { env: { ...childEnv(dir), TEST_COOKIE: cookie }, encoding: 'utf8' });
       assert.equal(read.status, 0, read.stderr);
-      assert.deepEqual(JSON.parse(read.stdout), { userId: 7, role: 'doctor', locked: false },
+      assert.deepEqual(JSON.parse(read.stdout), { userId: 1, role: 'doctor', locked: false },
         'process ใหม่ (= server restart) ต้องเห็น session เดิม — หมอไม่หลุด');
       const forged = spawnSync(process.execPath, ['--no-warnings', '-e', readScript],
         { env: { ...childEnv(dir), TEST_COOKIE: cookie.split('.')[0] + '.deadbeef' }, encoding: 'utf8' });

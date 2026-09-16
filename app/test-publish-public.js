@@ -24,14 +24,16 @@ try {
     const rows = JSON.parse(fs.readFileSync(path.join(dest, '.git/clinic-public-inventory.json'))).files;
     assert.equal(rows.length, result.files);
     assert.deepEqual(rows.map(x => x.file), collect(root).map(x => x.file));
-    for (const file of [...release.APP_FILES, ...release.TOOL_FILES]) assert(rows.some(x => x.file === 'app/' + file));
+  for (const file of [...release.APP_FILES.filter(f=>f!==require('./lib/runtime').RELATIVE), ...release.TOOL_FILES]) assert(rows.some(x => x.file === 'app/' + file));
+  assert(!rows.some(x=>x.file.endsWith('.exe')), 'public source snapshot excludes downloaded binaries');
+  assert(rows.some(x=>x.file==='app/tools/fetch-runtime.js'), 'source users can fetch the hash-pinned runtime');
     for (const dir of release.APP_DIRECTORIES) assert(rows.some(x => x.file === 'app/' + dir + '/fixture.js'));
     assert(rows.some(x => x.file === 'app/test-example.js'));
     assert(!fs.existsSync(path.join(dest, 'app/data')));
     assert(!fs.existsSync(path.join(dest, 'HANDOFF.md')));
     assert(fs.readFileSync(path.join(dest, 'LICENSE')).equals(license));
     const actual = new Set(collect(path.resolve(__dirname, '..')).map(x => x.file));
-    for (const rel of require('./tools/build-update-package').collectReleasePaths(__dirname, 'trial')) assert(actual.has('app/' + rel), 'missing release file: ' + rel);
+    for (const rel of require('./tools/build-update-package').collectReleasePaths(__dirname, 'trial').filter(f=>f!==require('./lib/runtime').RELATIVE)) assert(actual.has('app/' + rel), 'missing release source: ' + rel);
   });
   test('repeat copies changed source, deletes only stale managed files', () => {
     write(path.join(root, 'app/public/fixture.js'), '// newer fixture');

@@ -121,7 +121,9 @@ function markdownToHtml(markdown, kind = 'guide') {
     }
     out.push(`<p>${paragraph.map(v => inline(v.replace(/\s{2}$/, ''))).join('<br>')}</p>`);
   }
-  return out.join('\n');
+  const html=out.join('\n');
+  // Keep a trial task's instructions and answer lines together, including after ZIP notice changes.
+  return kind==='form' ? html.replace(/(<h3\b[\s\S]*?)(?=<h[23]\b|<hr>|$)/g,'<section class="form-task">$1</section>') : html;
 }
 
 const CSS = `
@@ -159,6 +161,7 @@ figure img { display: block; max-width: 100%; max-height: 185mm; margin: auto; b
 figcaption { color: #58717a; font-size: 8.5pt; margin-top: 1.5mm; }
 hr { border: 0; border-top: 1.2pt solid #c8dadd; margin: 8mm 0; }
 body.form h3 { background: #edf6f7; border-left: 4pt solid #13828a; padding: 2.5mm 3mm; border-radius: 1.5mm; }
+body.form .form-task { break-inside: avoid-page; page-break-inside: avoid; }
 body.form p { margin-bottom: 3mm; }
 body.form ol { margin-bottom: 2mm; }
 body.form nav.toc { margin: 3mm 0 4mm; padding: 4mm 5mm; }

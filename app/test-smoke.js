@@ -186,6 +186,24 @@ function client(base = BASE) {
 
   // ตัวช่วยตั้งค่ากระดาษใบเสร็จ/ใบนัด (ใช้ session admin แยกต่างหาก)
   const admin0 = client(); await admin0('POST', '/api/login', { username: 'admin', password: 'admin1234' }, 200);
+  console.log('--- optional medication sheet ---');
+  ok((await front('GET', `/print/medication/${re.data.receiptNo}`)).status === 409, 'ใบยาเริ่มปิด แม้เปิด URL ตรง');
+  ok(!(await front('GET', `/print/receipt/${re.data.receiptNo}`,undefined,200)).text.includes('id="medicationSheetLink"'), 'ปิดใบยาไม่เพิ่มปุ่มใบเสร็จ');
+  ok((await front('POST','/api/settings',{medication_sheet_enabled:'1'})).status===403,'หน้าร้านเปลี่ยนตั้งค่าคลินิกไม่ได้');
+  ok((await admin0('POST','/api/settings',{medication_sheet_enabled:'1',medication_sheet_font:'12'})).status===400,'ปฏิเสธต่ำกว่า baseline ก่อนบันทึกทุกค่า');
+  ok((await admin0('GET','/api/settings',undefined,200)).data.medication_sheet_enabled!=='1','ค่าชุดผิดไม่เปิดฟีเจอร์ครึ่งหนึ่ง');
+  await admin0('POST','/api/settings',{medication_sheet_enabled:'1',medication_sheet_font:'20',medication_sheet_paper:'A4'},200);
+  ok((await front('GET', `/print/medication/${receiptNo}`)).status===409,'ใบเสร็จยกเลิกห้ามพิมพ์ใบยา');
+  const medSource=(await front('GET',`/api/receipts/${re.data.receiptNo}`,undefined,200)).data;
+  const medicationStatus=medSource.lines.filter(l=>l.line_type==='drug').every(l=>String(l.instructions||'').trim())?200:409;
+  const medPrint=await front('GET',`/print/medication/${re.data.receiptNo}`,undefined,medicationStatus);
+  ok(medPrint.text.includes(medicationStatus===200?'ใบยาอ่านง่าย':'ไม่มีวิธีใช้'),'ข้อมูลครบพิมพ์ได้/ข้อมูลขาดไม่เดาวิธีใช้');
+  await doctor('GET',`/print/medication/${re.data.receiptNo}`,undefined,medicationStatus);
+  await front('GET',`/print/medication/${re.data.receiptNo}`,undefined,medicationStatus);
+  ok((await front('GET','/api/drugs',undefined,200)).data.find(d=>d.id===para.id).qty_on_hand===qtyAfterReissue,'เปิดซ้ำสองสถานีไม่ตัดสต็อก');
+  ok((await admin0('GET','/print/sample/medication?paper=A5&font=24',undefined,200)).text.includes('font-size:24pt'),'ตัวอย่าง A5/24 pt เปิดได้');
+  await admin0('POST','/api/settings',{medication_sheet_enabled:'0'},200);
+  ok((await front('GET',`/print/medication/${re.data.receiptNo}`)).status===409,'ปิดอีกครั้งแล้ว URL เดิมใช้ไม่ได้');
   const admin0Settings = async (slip) => admin0('POST', '/api/settings', { slip_paper: slip }, 200);
   console.log('--- med cert + amend note ---');
   const mcBody = { diagnosis_text: 'ป่วยจริง', rest_days: '2',
@@ -316,6 +334,9 @@ function client(base = BASE) {
   ok(recoveryHealth.data.state === 'action', 'สถานะกู้ข้อมูลบอก action ภาษาคน');
   const adminUser = (await admin('GET', '/api/users', undefined, 200)).data.find(u => u.username === 'admin');
   await admin('PATCH', `/api/users/${adminUser.id}`, { password: 'Changed-admin-123' }, 200);
+  await admin('GET', '/api/me', undefined, 401);
+  await admin('POST', '/api/login', { username: 'admin', password: 'Changed-admin-123' }, 200);
+  await lanAdmin('POST', '/api/login', { username: 'admin', password: 'Changed-admin-123' }, 200);
   ok((await admin('GET', '/api/me', undefined, 200)).data.setup_required === false, 'เปลี่ยนรหัส admin แล้วปิด setup warning');
   const hist = (await doctor('GET', `/api/patients/${hn}/history`, undefined, 200)).data;
   ok(hist.length >= 1 && hist[0].note, 'history มี note');
@@ -323,6 +344,12 @@ function client(base = BASE) {
   // เหลือ ISSUED ใบเดียว (ใบแรกโดน void-reissue, ใบสามโดน refund) ยอด = 3×2 + 100 = 106
   ok(rpt.money.receipts === 1 && rpt.money.total === 106, `รายงานนับเฉพาะ ISSUED: ${rpt.money.receipts} ใบ ยอด ${rpt.money.total}`);
   ok(rpt.voids.length >= 2, 'รายงานแสดง void');
+  const drugMonth = (await front('GET', '/api/reports/drugs-monthly', undefined, 200)).data;
+  ok(drugMonth.rows.some(r => r.review_receipts > 0 && r.profit === null), 'รายงานยารายเดือนเตือนแก้บิล/คืนเงิน ไม่เดากำไร');
+  ok(drugMonth.basis === 'current_issued_receipts' && !JSON.stringify(drugMonth).includes('patient_name'), 'รายงานบริหารยาไม่มีข้อมูลคนไข้');
+  ok((await anon('GET', '/api/reports/drugs-monthly')).status === 401, 'รายงานยาต้องเข้าสู่ระบบ');
+  ok((await front('GET', '/api/reports/drugs-monthly?month=2026-13')).status === 400, 'ปฏิเสธเดือนผิดรูปแบบ');
+  ok((await doctor('GET', '/api/reports/drugs-monthly?month=2020-02', undefined, 200)).data.rows.every(r=>r.qty===0), 'หมอดูเดือนที่ไม่มีขายได้โดยไม่เอายอดเดือนอื่นมาใส่');
   const recon = (await front('GET', '/api/stock/reconcile', undefined, 200)).data;
   ok(recon.length === 0, 'stock cache ตรง ledger ทุกตัว');
   ok((await anon('POST', '/api/backup/run', {})).status === 401, 'ผู้ไม่ login สั่ง backup ไม่ได้');

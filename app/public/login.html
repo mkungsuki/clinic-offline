@@ -38,10 +38,11 @@ async function doLogin() {
     // กลับไปหน้าที่ค้างไว้ (ตอนนี้ใช้กับ "หลังตั้งค่าเครื่องห้องตรวจ" — server รีสตาร์ทแล้ว session หาย) เฉพาะ path ในเว็บนี้ + role ที่มีสิทธิ์
     const after = localStorage.getItem('clinic_after_login') || '';
     localStorage.removeItem('clinic_after_login');
-    if (after === '/admin.html' && r.role === 'admin') { location.href = after; return; }
-    location.href = r.role === 'doctor' ? '/exam.html' : '/';
+    if (after === '/admin.html' && r.role === 'admin') { location.href = after + '?section=' + loginReturnSection; return; }
+    location.href = r.role === 'admin' ? '/admin.html' : r.role === 'doctor' ? '/exam.html' : '/';
   } catch (e) { msg.textContent = '❌ ' + e.message; }
 }
+const loginReturnSection = localStorage.getItem('clinic_after_login_reason') === 'update' ? 'system' : 'connections';
 if (localStorage.getItem('clinic_after_login') === '/admin.html') {
   const note = document.getElementById('restartNote');
   // หลังอัปเดตรุ่น: server เปิดใหม่ session หาย — ข้อความต้องบอกว่าเป็นขั้นตอนปกติของการอัปเดต ไม่ใช่ของตั้งค่าเครื่องห้องตรวจ
@@ -55,7 +56,12 @@ if (localStorage.getItem('clinic_after_login') === '/admin.html') {
   // ถูกดีดมาจากหน้าที่ login อยู่ (server เพิ่งรีสตาร์ท เช่น supervisor เปิดกลับหลัง crash) — ห้ามเด้งเงียบ (blind test 2026-08-24)
   localStorage.removeItem('clinic_relogin_notice');
   const note = document.getElementById('restartNote');
-  note.innerHTML = '🔄 โปรแกรมที่เครื่องหลักเพิ่งเริ่มทำงานใหม่ จึงต้องเข้าสู่ระบบอีกครั้ง — <b>เป็นเรื่องปกติ</b> ข้อมูลที่บันทึกไว้แล้วไม่หายไปไหน ถ้าเกิดบ่อยให้กด "🆘 แจ้งปัญหา" ส่งไฟล์ให้ผู้ดูแล';
+  note.innerHTML = 'กรุณาเข้าสู่ระบบอีกครั้ง บัญชีอาจถูกเปลี่ยนรหัสผ่าน เปลี่ยน PIN ปิดสิทธิ์ หรือการเข้าสู่ระบบหมดอายุ — หากเพิ่งเปลี่ยนรหัสผ่าน ให้ใช้รหัสใหม่ ข้อมูลที่บันทึกแล้วไม่หาย หากเข้าไม่ได้ให้ติดต่อผู้ดูแล';
+  note.classList.remove('hidden');
+}
+if (new URLSearchParams(location.search).get('account_changed') === '1') {
+  const note = document.getElementById('restartNote');
+  note.textContent = 'บันทึกการเปลี่ยนบัญชีแล้ว กรุณาเข้าสู่ระบบใหม่ด้วยรหัสผ่านปัจจุบัน';
   note.classList.remove('hidden');
 }
 document.getElementById('go').addEventListener('click', doLogin);

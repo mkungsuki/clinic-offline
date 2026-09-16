@@ -70,10 +70,26 @@ async function runIsolated({ idleLockMs, smokeEnv }) {
 }
 
 (async () => {
+  if(process.env.CLINIC_TEST_PASSWORD_ONLY==='1'){await require('./test-password-recovery-http')();return;}
+  if(process.env.CLINIC_TEST_TRIAL_TOOLS_ONLY==='1'){await require('./test-trial-maintenance-http')();return;}
+  if(process.env.CLINIC_TEST_DOSE_ONLY==='1'){await require('./test-dose-defaults-http')();return;}
+  if(process.env.CLINIC_TEST_RUNTIME_ONLY==='1'){await require('./test-runtime-http')();return;}
+  if(process.env.CLINIC_TEST_COEXISTENCE_ONLY==='1'){await require('./test-coexistence-http')();return;}
+  if(process.env.CLINIC_TEST_SOLO_ONLY==='1'){await require('./test-solo-doctor-http')();return;}
   // เวลาครึ่งวินาทีใช้เฉพาะพิสูจน์ idle lock แล้วทิ้ง instance นี้ทันที
   await runIsolated({ idleLockMs: 500, smokeEnv: { SMOKE_FAST_IDLE: '1', SMOKE_IDLE_ONLY: '1' } });
   // flow เต็มใช้เวลาจริง เพื่อไม่ให้เงื่อนไขทดสอบ idle มารบกวน role อื่น
   await runIsolated({ idleLockMs: 10 * 60 * 1000, smokeEnv: { SMOKE_FAST_IDLE: '0' } });
+  await require('./test-appointments-http')();
+  await require('./test-coexistence-http')();
+  await require('./test-auth-http')();
+  await require('./test-service-cost-http')();
+  await require('./test-solo-doctor-http')();
+  await require('./test-dose-defaults-http')();
+  await require('./test-password-recovery-http')();
+  await require('./test-trial-maintenance-http')();
+  if(process.env.CLINIC_TEST_RUNTIME==='1')await require('./test-runtime-http')();
+  if(process.env.CLINIC_TEST_RECORDING_KIT==='1')await require('../tools/recording/test-http.cjs')();
 })().catch(error => {
   console.error(`HTTP HARNESS FAIL: ${error.message}`);
   process.exitCode = 1;

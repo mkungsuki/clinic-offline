@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="th">
+<html lang="th" class="role-routing">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -15,7 +15,7 @@
 <body>
 <div id="backupBanner"></div>
 <div class="cols">
-  <div class="stack">
+  <div class="stack" style="min-width:0">
     <div class="card">
       <h2 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">รายงานรายวัน
         <span style="margin-left:auto;display:flex;align-items:center;gap:6px">
@@ -51,9 +51,9 @@
 
   <div class="stack">
     <div class="card">
-      <h2>Backup</h2>
+      <h2>สำรองข้อมูล</h2>
       <div id="bkStatus" class="stack"></div>
-      <button id="backupNowBtn" class="btn primary mt" onclick="runBackup()">💾 Backup เดี๋ยวนี้</button>
+      <button id="backupNowBtn" class="btn primary mt" onclick="runBackup()">💾 สำรองข้อมูลตอนนี้</button>
       <div id="bkRunResult" class="muted mt" aria-live="polite" style="white-space:pre-line"></div>
     </div>
     <div class="card">
@@ -69,6 +69,7 @@
 </div>
 
 <script src="/common.js"></script>
+<script src="/drug-report.js" defer></script>
 <script>
 'use strict';
 const TABLES = ['patients', 'visits', 'note_versions', 'order_versions', 'receipts', 'receipt_lines',
@@ -87,9 +88,11 @@ async function load() {
     <div class="card"><div class="muted">เงินสด</div><div class="big-num money">${baht(m.cash)}</div></div>
     <div class="card"><div class="muted">เงินโอน</div><div class="big-num money">${baht(m.transfer)}</div></div>
     <div class="card"><div class="muted">ส่วนลดรวม</div><div class="big-num money">${baht(m.discount)}</div></div>
-    <div class="card"><div class="muted">ทุนยาที่จ่าย</div><div class="big-num money">${baht(m.drug_cost)}</div></div>
-    <div class="card"><div class="muted">กำไรขั้นต้น</div><div class="big-num money" style="color:var(--green)">${baht(m.gross_profit)}</div>
-      ${m.unknown_cost_lines ? `<div class="muted">⚠ ${m.unknown_cost_lines} รายการยังไม่มีทุน (นับ 0)</div>` : ''}</div>`;
+    <div class="card"><div class="muted">ทุนยาที่จ่าย</div><div class="big-num money">${m.unknown_drug_cost_lines ? 'ทุนไม่ครบ' : baht(m.drug_cost)}</div></div>
+    <div class="card"><div class="muted">ต้นทุนบริการ / หัตถการ</div><div class="big-num money">${m.unknown_service_cost_lines ? 'ทุนไม่ครบ' : baht(m.service_cost)}</div></div>
+    <div class="card"><div class="muted">เหลือหลังต้นทุนตรง</div><div class="big-num money">${m.unknown_cost_lines ? 'ยังคำนวณไม่ได้' : baht(m.gross_profit)}</div>
+      <div class="muted">รายรับหลังส่วนลด − ทุนยา − ต้นทุนบริการ<br>ยังไม่หักค่าเช่า เงินเดือนประจำ และน้ำไฟ จึงไม่ใช่กำไรสุทธิ</div>
+      ${m.unknown_cost_lines ? `<div class="danger">⚠ ต้นทุนยังไม่ครบ ${m.unknown_cost_lines} รายการ ณ ตอนออกใบ ไม่เดาเป็นศูนย์</div><a href="/stock.html#serviceCard">ตั้งต้นทุนสำหรับบิลครั้งต่อไป</a><div class="muted">บิลเก่าไม่เปลี่ยนตามต้นทุนใหม่</div>` : ''}</div>`;
   // ใบเสร็จของวันที่เลือก: เวลา + ปุ่มจัดการตรงแถว (front แก้บิล/คืนเงินได้จากตรงนี้เลย — UAT รอบ 2)
   const isFront = ME && ME.role === 'front';
   const issuedCount = r.receipts.filter(x => x.status === 'ISSUED').length;
@@ -112,13 +115,14 @@ async function load() {
         · <a href="#" onclick="refundFromReport('${esc(x.receipt_no)}');return false" class="danger">คืนเงิน</a>` : ''}</td>
     </tr>`).join('') || '<tr><td colspan="6" class="muted">ไม่มีใบเสร็จวันนี้</td></tr>');
   const totalProfit = r.drugs_dispensed.reduce((s, d) => s + (d.profit || 0), 0);
+  const missingDrugCosts = r.drugs_dispensed.some(d => d.no_cost_lines);
   document.getElementById('drugSummary').textContent =
-    r.drugs_dispensed.length ? `${r.drugs_dispensed.length} ตัว · กำไรยา ${baht(totalProfit)} บาท — กดเพื่อดู` : 'ไม่มี';
+    r.drugs_dispensed.length ? `${r.drugs_dispensed.length} ตัว · ${missingDrugCosts ? 'ข้อมูลทุนไม่ครบ' : `ส่วนต่างก่อนส่วนลดบิล ${baht(totalProfit)} บาท`} — กดเพื่อดู` : 'ไม่มี';
   document.getElementById('drugTable').innerHTML =
-    `<tr><th>ยา</th><th class="num">จำนวน</th><th class="num">ขาย</th><th class="num">ทุน</th><th class="num">กำไร</th></tr>` +
+    `<tr><th>ยา</th><th class="num">จำนวน</th><th class="num">ขายก่อนลด</th><th class="num">ทุน</th><th class="num">ส่วนต่างก่อนส่วนลดบิล</th></tr>` +
     (r.drugs_dispensed.map(d => `<tr><td>${esc(d.name)}${d.no_cost_lines ? ' <span class="muted" title="บางรายการขายก่อนใส่ทุน">⚠</span>' : ''}</td>
       <td class="num">${d.qty} ${esc(d.unit || '')}</td><td class="num money">${baht(d.amount)}</td>
-      <td class="num money">${baht(d.cost)}</td><td class="num money">${baht(d.profit)}</td></tr>`).join('')
+      <td class="num money">${d.no_cost_lines ? 'ทุนไม่ครบ' : baht(d.cost)}</td><td class="num money">${d.no_cost_lines ? 'ยังคำนวณไม่ได้' : baht(d.profit)}</td></tr>`).join('')
       || '<tr><td colspan="5" class="muted">ไม่มี</td></tr>');
   const issues = [];
   if (r.empty_notes.length) issues.push(`<div class="warn-box">📝 visit เสร็จแล้วแต่ note ว่าง:
@@ -162,7 +166,7 @@ async function loadBackup() {
   renderBackupBanner(st);
   const targets = (st.targets || []).map(t => `<div class="${t.ok ? '' : 'danger'}">${esc(backupTargetText(t))}</div>`).join('');
   document.getElementById('bkStatus').innerHTML = `
-    <div>${st.ok ? '✅' : '❌'} backup สำเร็จล่าสุด: <b>${st.lastGood ? thDate(st.lastGood.finished_at) : 'ไม่เคยมี'}</b>
+    <div>${st.ok ? '✅' : '❌'} คัดลอกสำเนาสำเร็จล่าสุด: <b>${st.lastGood ? thDate(st.lastGood.finished_at) : 'ไม่เคยมี'}</b>
       ${st.age_hours != null ? `(${st.age_hours} ชม.ก่อน)` : ''}</div>
     ${st.last ? `<div class="muted">รอบล่าสุด: ${thDate(st.last.finished_at)}</div>` : ''}${targets}`;
 }
@@ -171,17 +175,17 @@ async function runBackup() {
   const result = document.getElementById('bkRunResult');
   const originalLabel = btn.textContent;
   btn.disabled = true;
-  btn.textContent = '⏳ กำลัง Backup...';
-  result.textContent = 'กำลังสร้าง snapshot และตรวจ checksum กรุณารอสักครู่';
-  toast('กำลัง backup...');
+  btn.textContent = '⏳ กำลังสำรองข้อมูล...';
+  result.textContent = 'กำลังสร้างสำเนาและตรวจความครบของไฟล์ กรุณารอสักครู่';
+  toast('กำลังสำรองข้อมูล...');
   try {
     const r = await api('POST', '/api/backup/run', {});
     result.textContent = backupRunResultText(r);
     result.className = `${r.ok ? 'muted' : 'danger'} mt`;
-    toast(r.ok ? 'Backup สำเร็จและตรวจ checksum แล้ว' : 'Backup บางปลายทางมีปัญหา', !r.ok);
+    toast(backupRunToastText(r), !r.ok);
     await loadBackup();
   } catch (e) {
-    result.textContent = `❌ Backup ไม่สำเร็จ: ${e.message}`;
+    result.textContent = `❌ สำรองข้อมูลไม่สำเร็จ: ${e.message}`;
     result.className = 'danger mt';
     toast(e.message, true);
   } finally {
@@ -220,27 +224,28 @@ async function loadLedger() {
       <td class="num money"><b>${baht(m.total)}</b></td>
       <td class="num money">${baht(m.cash)}</td><td class="num money">${baht(m.transfer)}</td>
       <td class="num money">${baht(m.drug_amount)}</td><td class="num money">${baht(m.service_amount)}</td>
-      <td class="num money">${baht(m.drug_cost)}</td>
-      <td class="num money" style="color:var(--green)">${baht(m.gross_profit)}</td>
+      <td class="num money">${m.unknown_cost_lines ? 'ทุนไม่ครบ' : baht(m.direct_cost)}</td>
+      <td class="num money">${m.unknown_cost_lines ? 'ยังคำนวณไม่ได้' : baht(m.gross_profit)}</td>
       <td class="num muted">${m.void_count ? m.void_count + ' ใบ' : '–'}</td></tr>`;
   }).join('');
   document.getElementById('ledgerTable').innerHTML =
     `<tr><th>เดือน</th><th class="num">ใบเสร็จ</th><th class="num">รายรับ</th><th class="num">เงินสด</th>
      <th class="num">โอน</th><th class="num">ค่ายา</th><th class="num">ค่าตรวจ/บริการ</th>
-     <th class="num">ทุนยา</th><th class="num">กำไรขั้นต้น</th><th class="num">void</th></tr>` +
+     <th class="num">ทุนยา + บริการ</th><th class="num">เหลือหลังต้นทุนตรง</th><th class="num">void</th></tr>` +
     (rows || '<tr><td colspan="10" class="muted">ยังไม่มีรายรับปีนี้</td></tr>') +
     (lg.months.length ? `<tr style="border-top:2px solid var(--ink)"><td><b>รวมปี</b></td>
       <td class="num"><b>${lg.total.receipts}</b></td><td class="num money"><b>${baht(lg.total.total)}</b></td>
       <td class="num money">${baht(lg.total.cash)}</td><td class="num money">${baht(lg.total.transfer)}</td>
       <td class="num money">${baht(lg.total.drug_amount)}</td><td class="num money">${baht(lg.total.service_amount)}</td>
-      <td class="num money">${baht(lg.total.drug_cost)}</td>
-      <td class="num money" style="color:var(--green)"><b>${baht(lg.total.gross_profit)}</b></td><td></td></tr>` : '');
+      <td class="num money">${lg.total.unknown_cost_lines ? 'ทุนไม่ครบ' : baht(lg.total.direct_cost)}</td>
+      <td class="num money"><b>${lg.total.unknown_cost_lines ? 'ยังคำนวณไม่ได้' : baht(lg.total.gross_profit)}</b></td><td></td></tr>` : '');
   document.getElementById('ledgerNote').innerHTML = lg.months.length ?
     `ครึ่งปีแรก (ม.ค.–มิ.ย.) = <b>${baht(lg.half1)}</b> บาท ใช้ยื่น ภ.ง.ด.94 ·
      ทั้งปี = <b>${baht(lg.total.total)}</b> บาท ใช้ยื่น ภ.ง.ด.90 ·
      ตัวเลขนับเฉพาะใบเสร็จปกติ (ไม่รวมที่ยกเลิก/คืนเงิน) — ตรวจกับนักบัญชีอีกครั้งก่อนยื่นจริง<br>
-     กำไรขั้นต้น = รายรับ − ทุนยา (snapshot ทุน ณ วันขาย) — ยังไม่หักค่าเช่า/ค่าแรง/ค่าน้ำไฟ
-     · บิลที่ออกก่อนใส่ราคาทุนจะนับทุน 0` : '';
+     เหลือหลังต้นทุนตรง = รายรับหลังส่วนลด − ทุนยา − ต้นทุนบริการ ณ ตอนออกใบ<br>
+     ยังไม่หักค่าเช่า เงินเดือนประจำ และน้ำไฟ จึงไม่ใช่กำไรสุทธิ
+     · บิลที่ยังไม่มีทุนจะแสดงว่าทุนไม่ครบ ไม่เดาเป็นศูนย์ และไม่เปลี่ยนตามต้นทุนที่ตั้งภายหลัง` : '';
 }
 initPage('reports').then(me => { if (me) { load(); loadBackup(); initLedgerYears(); loadLedger(); } });
 </script>

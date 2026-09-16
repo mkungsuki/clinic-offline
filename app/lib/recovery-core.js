@@ -318,8 +318,7 @@ function directoryBytes(root) {
 
 function writeJournal(file, journal) {
   const temporary = `${file}.partial`;
-  fs.writeFileSync(temporary, JSON.stringify(journal, null, 2), 'utf8');
-  if (fs.existsSync(file)) fs.unlinkSync(file);
+  fs.writeFileSync(temporary, JSON.stringify(journal, null, 2), { encoding: 'utf8', flush: true });
   fs.renameSync(temporary, file);
 }
 
@@ -340,26 +339,34 @@ function publishPreparedData(options) {
   const rollbackRoot = path.join(parent, 'recovery-rollbacks');
   fs.mkdirSync(rollbackRoot, { recursive: true });
   const stamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
-  const rollbackDir = path.join(rollbackRoot, `before-${stamp}`);
+  const rollbackDir = path.join(rollbackRoot, `before-${stamp}-${crypto.randomUUID()}`);
   fs.mkdirSync(rollbackDir, { recursive: false });
   const journalFile = path.join(rollbackDir, 'restore-journal.json');
-  const journal = { format: 1, state: 'prepared', startedAt: new Date().toISOString(), movedOld: [], published: [] };
+  const journal = { format: 1, state: 'prepared', operationId: options.operationId || null, startedAt: new Date().toISOString(), movedOld: [], published: [] };
   writeJournal(journalFile, journal);
-  const payloads = ['clinic.db', 'clinic.db-wal', 'clinic.db-shm', 'attachments', 'assets'];
+  // Replacing the key also retires any previous envelope/owner. A legacy Kit
+  // without an envelope must never leave a different clinic's password active.
+  const secretFiles = ['cloud-backup.key', 'recovery-password.json', 'backup-owner.json'];
+  const extra = fs.existsSync(path.join(preparedDataDir, 'cloud-backup.key')) ? secretFiles : [];
+  const payloads = ['clinic.db', 'clinic.db-wal', 'clinic.db-shm', 'attachments', 'assets', ...extra];
+  journal.payloads = payloads;
   const moveIfExists = (from, to, record) => {
     if (!fs.existsSync(from)) return;
     fs.mkdirSync(path.dirname(to), { recursive: true });
-    fs.renameSync(from, to);
     record.push(path.basename(from));
+    if (record === journal.movedOld || record === journal.published) writeJournal(journalFile, journal);
+    fs.renameSync(from, to);
   };
   try {
+    journal.state = 'moving-old';
     for (const name of payloads) {
       moveIfExists(path.join(liveDataDir, name), path.join(rollbackDir, 'data', name), journal.movedOld);
       writeJournal(journalFile, { ...journal, state: 'moving-old' });
     }
     journal.state = 'old-preserved';
     writeJournal(journalFile, journal);
-    for (const name of ['clinic.db', 'attachments', 'assets']) {
+    journal.state = 'publishing-new';
+    for (const name of ['clinic.db', 'attachments', 'assets', ...extra]) {
       moveIfExists(path.join(preparedDataDir, name), path.join(liveDataDir, name), journal.published);
       writeJournal(journalFile, { ...journal, state: 'publishing-new' });
     }
@@ -375,11 +382,13 @@ function publishPreparedData(options) {
     writeJournal(journalFile, journal);
     const failedDir = path.join(rollbackDir, 'failed-new');
     fs.mkdirSync(failedDir, { recursive: true });
-    for (const name of ['clinic.db', 'clinic.db-wal', 'clinic.db-shm', 'attachments', 'assets']) {
-      try { moveIfExists(path.join(liveDataDir, name), path.join(failedDir, name), []); } catch {}
-    }
-    for (const name of journal.movedOld) {
-      try { moveIfExists(path.join(rollbackDir, 'data', name), path.join(liveDataDir, name), []); } catch {}
+    try {
+      for (const name of journal.published) moveIfExists(path.join(liveDataDir, name), path.join(failedDir, name), []);
+      for (const name of journal.movedOld) moveIfExists(path.join(rollbackDir, 'data', name), path.join(liveDataDir, name), []);
+    } catch {
+      // Keep the write-ahead rolling-back state. Startup must retry the undo,
+      // not initialize an empty database after a falsely terminal receipt.
+      throw recoveryError('ROLLBACK_INCOMPLETE', 'ยังคืนข้อมูลเดิมไม่ครบ ระบบเก็บข้อมูลเดิมไว้แล้ว กรุณาปิดและเปิดโปรแกรมใหม่เพื่อให้ระบบทำต่อ');
     }
     journal.state = 'rolled-back';
     journal.finishedAt = new Date().toISOString();
@@ -394,6 +403,8 @@ function rollbackPublishedData(options) {
   const journalFile = path.join(rollbackDir, 'restore-journal.json');
   const journal = JSON.parse(fs.readFileSync(journalFile, 'utf8'));
   if (journal.state !== 'committed') throw recoveryError('ROLLBACK_STATE', 'ไม่สามารถย้อนกลับจากสถานะนี้ได้โดยอัตโนมัติ');
+  journal.state = 'rolling-back-after-start-failure';
+  writeJournal(journalFile, journal);
   const failedDir = path.join(rollbackDir, 'failed-after-start');
   fs.mkdirSync(failedDir, { recursive: true });
   const moveIfExists = (from, to) => {
@@ -401,7 +412,7 @@ function rollbackPublishedData(options) {
     fs.mkdirSync(path.dirname(to), { recursive: true });
     fs.renameSync(from, to);
   };
-  for (const name of ['clinic.db', 'clinic.db-wal', 'clinic.db-shm', 'attachments', 'assets']) {
+  for (const name of journal.payloads || ['clinic.db', 'clinic.db-wal', 'clinic.db-shm', 'attachments', 'assets']) {
     moveIfExists(path.join(liveDataDir, name), path.join(failedDir, name));
   }
   for (const name of journal.movedOld || []) {
@@ -411,6 +422,32 @@ function rollbackPublishedData(options) {
   journal.rolledBackAt = new Date().toISOString();
   writeJournal(journalFile, journal);
   return { ok: true, journalFile };
+}
+
+function recoverInterruptedPublications(liveDataDir) {
+  const root = path.join(path.dirname(path.resolve(liveDataDir)), 'recovery-rollbacks');
+  if (!fs.existsSync(root)) return;
+  const allowed = new Set(['clinic.db', 'clinic.db-wal', 'clinic.db-shm', 'attachments', 'assets', 'cloud-backup.key', 'recovery-password.json', 'backup-owner.json']);
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.isSymbolicLink() || !entry.name.startsWith('before-')) continue;
+    const rollbackDir = path.join(root, entry.name), file = path.join(rollbackDir, 'restore-journal.json');
+    if (!fs.existsSync(file)) continue;
+    const journal = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (['committed', 'rolled-back', 'rolled-back-after-start-failure', 'rolled-back-after-interruption'].includes(journal.state)) continue;
+    const names = [...new Set([...(journal.movedOld || []), ...(journal.published || [])])];
+    if (names.some(n => !allowed.has(n))) throw recoveryError('JOURNAL_INVALID', 'บันทึกการกู้ค้างไม่ถูกต้อง ระบบหยุดเพื่อรักษาข้อมูลเดิม');
+    const failed = path.join(rollbackDir, 'interrupted-new'); fs.mkdirSync(failed, { recursive: true });
+    for (const name of names) {
+      const old = path.join(rollbackDir, 'data', name), live = path.join(liveDataDir, name);
+      if (fs.existsSync(old)) {
+        if (fs.existsSync(live)) fs.renameSync(live, path.join(failed, `${name}-${crypto.randomUUID()}`));
+        fs.renameSync(old, live);
+      } else if (!(journal.movedOld || []).includes(name) && (journal.published || []).includes(name) && fs.existsSync(live)) {
+        fs.renameSync(live, path.join(failed, `${name}-${crypto.randomUUID()}`));
+      }
+    }
+    writeJournal(file, { ...journal, state: 'rolled-back-after-interruption' });
+  }
 }
 
 module.exports = {
@@ -423,6 +460,7 @@ module.exports = {
   verifyDatabase,
   publishPreparedData,
   rollbackPublishedData,
+  recoverInterruptedPublications,
   directoryBytes,
   sha256,
 };

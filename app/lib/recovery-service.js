@@ -7,6 +7,7 @@ const backup = require('./backup');
 const core = require('./recovery-core');
 const discovery = require('./recovery-discovery');
 const { createRecoveryKit } = require('./recovery-kit');
+const passwordRecovery = require('./password-recovery');
 
 const APP_ROOT = path.join(__dirname, '..');
 const DRILLS_DIR = path.join(DATA_DIR, 'recovery-drills');
@@ -23,26 +24,36 @@ function hoursSince(value) {
 
 function health() {
   const current = backup.status();
+  const password = passwordRecovery.localStatus(DATA_DIR);
   const kitFingerprint = getSetting('recovery_kit_fingerprint', '');
   const kitCreatedAt = getSetting('recovery_kit_created_at', '');
   const lastDrillAt = getSetting('recovery_last_drill_at', '');
-  const drillFresh = hoursSince(lastDrillAt) <= 24 * 180;
+  const drillFresh = hoursSince(lastDrillAt) <= 24 * 180 && (!password.ready || getSetting('recovery_last_drill_password_id', '') === password.id);
+  const cloudCopyOk = !!(current.cloud && current.cloud.ok);
+  const externalCopyOk = (current.targets || []).some(t => t.kind === 'external' && t.ok);
   let state = 'safe';
-  let headline = 'ข้อมูลปลอดภัยแล้ว';
+  let headline = 'ตรวจสำเนาล่าสุดในเครื่องแล้ว และเคยซ้อมกู้';
   let action = null;
   if (!current.lastGood || !current.ok) {
     state = 'action'; headline = 'ข้อมูลสำรองยังไม่ใหม่พอ'; action = { code: 'RUN_BACKUP', label: 'สำรองข้อมูลตอนนี้' };
   } else if (!current.off_device_ok) {
     state = 'action'; headline = 'ข้อมูลยังอยู่ในเครื่องนี้อย่างเดียว'; action = { code: 'SETUP_BACKUP', label: 'ตั้งค่าการสำรองข้อมูล' };
-  } else if (!kitFingerprint) {
-    state = 'action'; headline = 'ยังไม่มี USB สำหรับกู้ฉุกเฉิน'; action = { code: 'CREATE_KIT', label: 'สร้าง Recovery Kit' };
+  } else if (!kitFingerprint && !password.ready) {
+    state = 'action'; headline = 'ตั้งรหัสเพื่อกู้บนเครื่องใหม่ได้โดยไม่ต้องมี USB กู้ฉุกเฉิน'; action = { code: 'SET_PASSWORD', label: 'ตั้งรหัสสำรองข้อมูล' };
+  } else if (password.ready && (current.targets || []).some(t => ['external', 'cloud_sync'].includes(t.kind) && (!t.ok || t.passwordCopy?.id !== password.id))) {
+    state = 'action'; headline = 'ยังส่งไฟล์สำหรับรหัสล่าสุดไม่ครบทุกปลายทาง'; action = { code: 'RUN_BACKUP', label: 'สำรองข้อมูลตอนนี้' };
   } else if (!lastDrillAt || !drillFresh) {
     state = 'action'; headline = 'ควรซ้อมกู้ข้อมูลเพื่อให้แน่ใจว่าเปิดได้'; action = { code: 'RUN_DRILL', label: 'ซ้อมกู้ข้อมูล' };
+  } else if (cloudCopyOk) {
+    state = 'action'; headline = 'คัดลอกเข้าโฟลเดอร์คลาวด์แล้ว — ยังไม่ยืนยันการอัปโหลด';
   }
   return {
     state, headline, action,
     lastBackupAt: current.lastGood && current.lastGood.finished_at || null,
     offDeviceOk: current.off_device_ok,
+    cloudCopyOk, externalCopyOk, password,
+    passwordCopies: (current.targets || []).filter(t => ['external', 'cloud_sync'].includes(t.kind)).map(t => ({ kind: t.kind, current: !!(password.ready && t.ok && t.passwordCopy?.id === password.id) })),
+    drillMethod: getSetting('recovery_last_drill_method', ''),
     kitReady: !!kitFingerprint,
     kitCreatedAt: kitCreatedAt || null,
     lastDrillAt: lastDrillAt || null,
@@ -155,7 +166,37 @@ function candidateSources() {
   ].filter(item => item.directory && fs.existsSync(item.directory));
 }
 
-function runDrill() {
+async function setPassword(body) {
+  const keyInfo = backup.ensureRecoveryKeyFile();
+  return passwordRecovery.setPassword({ dataDir: DATA_DIR, keyFile: keyInfo.file,
+    password: body.password, confirmation: body.confirmation, opId: body.op_id, expectedId: body.expected_id });
+}
+
+async function runPasswordDrill(password) {
+  let lastError;
+  for (const source of candidateSources().filter(s => s.kind !== 'local')) {
+    try {
+      return await passwordRecovery.withPassword(source.directory, password, async (key, envelope) => {
+        const point = core.listRestorePoints(source.directory, key).find(p => p.complete && p.encrypted);
+        if (!point) throw new Error('ยังไม่มีข้อมูลสำรองครบชุดในโฟลเดอร์ที่เลือก กรุณาสำรองหรือดาวน์โหลดใหม่');
+        fs.mkdirSync(DRILLS_DIR, { recursive: true });
+        const outputDir = path.join(DRILLS_DIR, `drill-${crypto.randomUUID()}`);
+        try {
+          const result = core.restoreToNewDirectory({ sourceDir: source.directory, outputDir, manifestFile: point.id, key });
+          setSetting('recovery_last_drill_at', now());
+          setSetting('recovery_last_drill_backup_at', result.backupCreatedAt);
+          setSetting('recovery_last_drill_method', 'password');
+          setSetting('recovery_last_drill_password_id', envelope.id);
+          return { ok: true, method: 'password', backupCreatedAt: result.backupCreatedAt, checkedAt: getSetting('recovery_last_drill_at', '') };
+        } finally { if (fs.existsSync(path.join(outputDir, 'data'))) fs.rmSync(path.join(outputDir, 'data'), { recursive: true, force: true }); }
+      });
+    } catch (error) { lastError = error; }
+  }
+  throw lastError || new Error('ยังไม่มีโฟลเดอร์สำรองนอกเครื่องสำหรับลองรหัส กรุณาตั้งปลายทางและสำรองก่อน');
+}
+
+function runDrill(body = {}) {
+  if (body.method === 'password' || passwordRecovery.localStatus(DATA_DIR).ready) return runPasswordDrill(body.password);
   const keyInfo = backup.ensureRecoveryKeyFile();
   const key = core.readRecoveryKeyFile(keyInfo.file);
   let selected = null;
@@ -176,7 +217,8 @@ function runDrill() {
   fs.rmSync(path.join(outputDir, 'data'), { recursive: true, force: true });
   setSetting('recovery_last_drill_at', now());
   setSetting('recovery_last_drill_backup_at', result.backupCreatedAt);
+  setSetting('recovery_last_drill_method', 'local-key');
   return { ok: true, backupCreatedAt: result.backupCreatedAt, checkedAt: getSetting('recovery_last_drill_at', '') };
 }
 
-module.exports = { health, setupOptions, configureDestinations, createKit, runDrill };
+module.exports = { health, setupOptions, configureDestinations, createKit, runDrill, setPassword };

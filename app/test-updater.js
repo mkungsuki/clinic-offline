@@ -450,7 +450,7 @@ testAsync('พอร์ตยังถูกถือแต่ไม่ตอบ
   const port = await new Promise(resolve => held.listen(0, '0.0.0.0', () => resolve(held.address().port)));
   try {
     fs.writeFileSync(path.join(updateRoot, 'install-profile.json'), JSON.stringify({ format: 1, product: 'clinic-offline',
-      edition: 'standard', variant: 'production', channel: 'pilot', port, https_port: port + 363 }));
+      edition: 'standard', variant: 'production', channel: 'pilot', port, https_port: port <= 65172 ? port + 363 : port - 363 }));
     const id = crypto.randomUUID();
     const downloadDir = path.join(updateRoot, 'downloads', id); fs.mkdirSync(downloadDir, { recursive: true });
     const manifestFile = path.join(downloadDir, 'manifest.json'), signatureFile = `${manifestFile}.sig`;
@@ -488,7 +488,7 @@ test('standalone assistant ทำ snapshot → rehearsal → swap → health →
   fs.writeFileSync(path.join(appRoot, 'package.json'), JSON.stringify(oldPackage, null, 2) + '\n');
   fs.mkdirSync(updateRoot, { recursive: true });
   fs.writeFileSync(path.join(updateRoot, 'install-profile.json'), JSON.stringify({ format: 1, product: 'clinic-offline',
-    edition: 'standard', variant: 'production', channel: 'pilot', port, https_port: port + 363 }));
+    edition: 'standard', variant: 'production', channel: 'pilot', port, https_port: port <= 65172 ? port + 363 : port - 363 }));
   fs.mkdirSync(path.join(appRoot, 'data'), { recursive: true });
   const seed = spawnSync(process.execPath, ['--no-warnings', 'seed.js'], { cwd: appRoot,
     env: { ...process.env, CLINIC_DATA_DIR: path.join(appRoot, 'data') }, encoding: 'utf8', timeout: 30000 });
@@ -536,11 +536,14 @@ test('standalone assistant ทำ snapshot → rehearsal → swap → health →
 // ---- launch/supervisor.js (incident 2026-08-24: server ตายกลางงานแล้วไม่มีทั้งคนเปิดกลับและหลักฐาน) ----
 // ใช้ supervisor+applog ตัวจริง copy ลงโครง temp คู่กับ server.js ปลอมที่สั่งพฤติกรรมผ่าน env
 function supervisorHarness(mode) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clinic-supervisor-'));
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'clinic-supervisor-'));
+  const root = path.join(base,'app');
   fs.mkdirSync(path.join(root, 'launch'), { recursive: true });
   fs.mkdirSync(path.join(root, 'lib'), { recursive: true });
   fs.copyFileSync(path.join(__dirname, 'launch', 'supervisor.js'), path.join(root, 'launch', 'supervisor.js'));
   fs.copyFileSync(path.join(__dirname, 'lib', 'applog.js'), path.join(root, 'lib', 'applog.js'));
+  fs.copyFileSync(path.join(__dirname,'lib','trial-start-guard.js'),path.join(root,'lib','trial-start-guard.js'));
+  if(mode==='trial-pending'){fs.mkdirSync(path.join(base,'update'));fs.writeFileSync(path.join(base,'update/trial-maintenance-pending.json'),'{}');}
   fs.writeFileSync(path.join(root, 'server.js'), `'use strict';
 const fs = require('node:fs');
 const file = process.env.FAKE_STARTS_FILE;
@@ -567,8 +570,12 @@ if (mode === 'crash-once') { if (n === 1) process.exit(1); setTimeout(() => proc
     try { return fs.readdirSync(logDir).map(f => fs.readFileSync(path.join(logDir, f), 'utf8')).join('\n'); }
     catch { return ''; }
   };
-  return { run, starts, logText, cleanup: () => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} } };
+  return { run, starts, logText, cleanup: () => { try { fs.rmSync(base, { recursive: true, force: true }); } catch {} } };
 }
+
+testAsync('supervisor: incomplete trial reset must never start a new empty database',async()=>{
+  const h=supervisorHarness('trial-pending');try{assert.strictEqual((await h.run()).code,0);assert.strictEqual(h.starts(),0);assert(h.logText().includes('ทำต่อ.cmd'));}finally{h.cleanup();}
+});
 
 testAsync('supervisor: server ปิดเอง (exit 0 = recovery/update สั่ง) ต้องไม่ถูกเปิดกลับ', async () => {
   const h = supervisorHarness('clean');
@@ -603,6 +610,20 @@ testAsync('supervisor: ตายเร็วติดกัน 3 ครั้ง
   assert.strictEqual(h.starts(), 3, 'ลอง 3 ครั้งแล้วต้องหยุด');
   assert(h.logText().includes('3 ครั้งติดกัน'), 'ต้องมีข้อความสำหรับกล่องแจ้งผู้ใช้ใน log');
   h.cleanup();
+});
+
+testAsync('unchanged signed runtime is not moved while its executable is running', async () => {
+  const root=path.join(temp,'held-runtime'),appRoot=path.join(root,'app'),stagedApp=path.join(root,'stage');
+  fs.mkdirSync(appRoot,{recursive:true});fs.mkdirSync(stagedApp,{recursive:true});
+  const target=path.join(appRoot,'node.exe');fs.copyFileSync(process.execPath,target);fs.copyFileSync(target,path.join(stagedApp,'node.exe'));
+  const child=require('node:child_process').spawn(target,['-e',"process.stdout.write('ready');setInterval(()=>{},1000)"],{stdio:['ignore','pipe','ignore'],windowsHide:true});
+  try {
+    await new Promise((resolve,reject)=>{child.stdout.once('data',resolve);child.once('error',reject);});
+    const journal={format:1,id:'held',state:'rehearsal-passed',snapshot_file:null,files:[],obsolete:[]};
+    const journalFile=path.join(root,'update',updateCore.JOURNAL_NAME);
+    updateCore.applyFileTransaction({appRoot,stagedApp,rollbackRoot:path.join(root,'rollback'),journal,journalFile,manifest:{files:[{path:'node.exe',bytes:fs.statSync(target).size,sha256:hash(fs.readFileSync(target))}],obsolete:[]}});
+    assert.equal(journal.files.length,0);assert.equal(child.exitCode,null);assert(fs.existsSync(target));
+  } finally {const ended=new Promise(resolve=>child.once('exit',resolve));child.kill();await ended;}
 });
 
 (async () => {

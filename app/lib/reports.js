@@ -30,15 +30,13 @@ function daily(date) {
     FROM receipt_lines rl JOIN receipts r ON r.receipt_no = rl.receipt_no
     WHERE r.status = 'ISSUED' AND rl.line_type = 'drug' AND r.created_at BETWEEN ? AND ?
     GROUP BY rl.name, rl.unit ORDER BY qty DESC`).all(d0, d1);
-  // กำไรขั้นต้น = รายรับสุทธิ − ทุนยาที่จ่าย (ค่าบริการถือว่าไม่มีทุนตรง)
+  // Direct contribution only; NULL cost is unknown, never a free service.
   const cogs = db.prepare(`
-    SELECT ROUND(SUM(rl.qty * COALESCE(rl.cost_each, 0)), 2) cost,
-      SUM(CASE WHEN rl.line_type = 'drug' AND rl.cost_each IS NULL THEN 1 ELSE 0 END) unknown_cost
+    SELECT rl.line_type, ROUND(SUM(rl.qty * COALESCE(rl.cost_each, 0)), 2) cost,
+      SUM(CASE WHEN rl.cost_each IS NULL THEN 1 ELSE 0 END) unknown_cost
     FROM receipt_lines rl JOIN receipts r ON r.receipt_no = rl.receipt_no
-    WHERE r.status = 'ISSUED' AND r.created_at BETWEEN ? AND ?`).get(d0, d1);
-  money.drug_cost = cogs.cost || 0;
-  money.gross_profit = Math.round(((money.total || 0) - money.drug_cost) * 100) / 100;
-  money.unknown_cost_lines = cogs.unknown_cost || 0;
+    WHERE r.status = 'ISSUED' AND r.created_at BETWEEN ? AND ? GROUP BY rl.line_type`).all(d0, d1);
+  applyDirectCosts(money, cogs);
   // คุณภาพข้อมูล: visit ที่ note ว่าง (plan §2 อนุญาตแต่ต้องโชว์ในรายงานปิดวัน)
   const emptyNotes = db.prepare(`
     SELECT v.id, v.queue_no, p.first_name, p.last_name FROM visits v
@@ -66,7 +64,8 @@ function monthlyLedger(year) {
   const byType = db.prepare(`
     SELECT substr(r.created_at, 1, 7) AS month, rl.line_type,
       ROUND(SUM(rl.amount), 2) amount,
-      ROUND(SUM(rl.qty * COALESCE(rl.cost_each, 0)), 2) cost
+      ROUND(SUM(rl.qty * COALESCE(rl.cost_each, 0)), 2) cost,
+      SUM(CASE WHEN rl.cost_each IS NULL THEN 1 ELSE 0 END) unknown_cost
     FROM receipt_lines rl JOIN receipts r ON r.receipt_no = rl.receipt_no
     WHERE r.status = 'ISSUED' AND r.created_at BETWEEN ? AND ?
     GROUP BY month, rl.line_type`).all(y0, y1);
@@ -77,9 +76,8 @@ function monthlyLedger(year) {
   for (const m of months) {
     const drug = byType.find(t => t.month === m.month && t.line_type === 'drug') || {};
     m.drug_amount = drug.amount || 0;
-    m.drug_cost = drug.cost || 0;
     m.service_amount = (byType.find(t => t.month === m.month && t.line_type === 'service') || {}).amount || 0;
-    m.gross_profit = Math.round((m.total - m.drug_cost) * 100) / 100;
+    applyDirectCosts(m, byType.filter(t => t.month === m.month));
     const v = voids.find(x => x.month === m.month);
     m.void_count = v ? v.count : 0;
     m.void_amount = v ? v.amount : 0;
@@ -89,9 +87,24 @@ function monthlyLedger(year) {
     year, months,
     total: { receipts: sum('receipts'), total: sum('total'), cash: sum('cash'), transfer: sum('transfer'),
       discount: sum('discount'), drug_amount: sum('drug_amount'), service_amount: sum('service_amount'),
-      drug_cost: sum('drug_cost'), gross_profit: sum('gross_profit') },
+      drug_cost: sum('drug_cost'), service_cost: sum('service_cost'), direct_cost: sum('direct_cost'),
+      gross_profit: sum('unknown_cost_lines') ? null : sum('gross_profit'), unknown_cost_lines: sum('unknown_cost_lines'),
+      unknown_drug_cost_lines: sum('unknown_drug_cost_lines'), unknown_service_cost_lines: sum('unknown_service_cost_lines') },
     half1: Math.round(months.filter(m => Number(m.month.slice(5)) <= 6).reduce((s, m) => s + m.total, 0) * 100) / 100,
   };
+}
+
+function applyDirectCosts(money, rows) {
+  const drug = rows.find(r => r.line_type === 'drug') || {};
+  const service = rows.find(r => r.line_type === 'service') || {};
+  money.drug_cost = drug.cost || 0;
+  money.service_cost = service.cost || 0;
+  money.direct_cost = Math.round((money.drug_cost + money.service_cost) * 100) / 100;
+  money.unknown_drug_cost_lines = drug.unknown_cost || 0;
+  money.unknown_service_cost_lines = service.unknown_cost || 0;
+  money.unknown_cost_lines = rows.reduce((sum, r) => sum + (r.unknown_cost || 0), 0);
+  // Retain the API field name for existing clients, but do not return fabricated profits.
+  money.gross_profit = money.unknown_cost_lines ? null : Math.round(((money.total || 0) - money.direct_cost) * 100) / 100;
 }
 
 // รายงานเงินสดรับ รายใบเสร็จทั้งปี (แนบให้นักบัญชี/สรรพากร)

@@ -58,7 +58,12 @@ async function waitFor(check, message, timeout = 15000, interval = 100) {
 }
 
 async function verifyAbout(page, returnUrl, isAdmin = false) {
+  await waitExpression(page, `[...document.querySelectorAll('.topbar nav a')].some(a => /เกี่ยวกับโปรแกรม|ตั้งค่า/.test(a.textContent))`, 'เมนูเกี่ยวกับโปรแกรมยังโหลดไม่ครบ');
   await evaluate(page, `(() => { const a = [...document.querySelectorAll('.topbar nav a')].find(a => /เกี่ยวกับโปรแกรม|ตั้งค่า/.test(a.textContent)); if (!a) throw new Error('ไม่พบทางไปเกี่ยวกับโปรแกรม'); a.click(); return true; })()`, true);
+  if (isAdmin) {
+    await waitExpression(page, `typeof adminReady !== 'undefined' && adminReady`, 'admin menu not ready');
+    await clickAppointmentControl(page, '#adminNav a[href="/admin.html?section=system"]');
+  }
   await waitExpression(page, `location.pathname === '/admin.html' && !!document.querySelector('#aboutCard') && !document.querySelector('#aboutCard').classList.contains('hidden') && document.querySelector('#aboutVersion').textContent === ${JSON.stringify(require('./package.json').version)}`, 'ไม่เห็นชื่อรุ่นในการ์ดเกี่ยวกับโปรแกรม');
   await waitExpression(page, `document.querySelector('#donateQr').complete && document.querySelector('#donateQr').naturalWidth > 0`, 'QR โหลดไม่สำเร็จ');
   const state = await evaluate(page, `(() => {
@@ -73,6 +78,124 @@ async function verifyAbout(page, returnUrl, isAdmin = false) {
   if (state.controlsHidden === isAdmin || !state.withinWidth || !state.fullRatio || !state.message || !state.onlyOne) throw new Error('เกี่ยวกับโปรแกรมผิดเงื่อนไข: ' + JSON.stringify(state));
   await page.send('Page.navigate', { url: returnUrl });
   await waitExpression(page, `document.readyState === 'complete' && typeof ME !== 'undefined' && !!ME`, 'กลับหน้าทำงานหลังอ่านเกี่ยวกับโปรแกรมไม่ได้');
+}
+
+async function verifyAdminPages(tab, origins, viewport, cdpPort) {
+  for (const origin of origins) {
+    await tab.send('Page.navigate', {url:origin+'/login.html'});
+    await waitExpression(tab, `document.readyState==='complete' && !!document.querySelector('#go')`, 'admin login page');
+    await evaluate(tab, `document.querySelector('#u').value='admin';document.querySelector('#p').value='admin1234';document.querySelector('#go').click();true`, true);
+    await waitExpression(tab, `location.pathname==='/admin.html' && typeof adminReady!=='undefined' && adminReady`, 'admin must land in settings');
+    const sections=['clinic','printing','users','connections','backup','system','advanced'];
+    for (const section of sections) {
+      await clickAppointmentControl(tab, `#adminNav a[href="/admin.html?section=${section}"]`);
+      await waitExpression(tab, `typeof adminReady!=='undefined' && adminReady && adminSection===${JSON.stringify(section)}`, 'admin category '+section);
+      const state=await evaluate(tab, `(() => {
+        const cards=[...document.querySelectorAll('#adminPage > [data-admin-section]')];
+        const ids=[...document.querySelectorAll('[id]')].map(x=>x.id);
+        return {only:cards.length>0&&cards.every(c=>c.dataset.adminSection===adminSection),
+          duplicates:ids.length!==new Set(ids).size, overflow:document.documentElement.scrollWidth>innerWidth+2,
+          menu:document.querySelector('#adminNav [aria-current]').textContent,
+          title:document.querySelector('#adminPageTitle').textContent};
+      })()`);
+      if(!state.only||state.duplicates||state.overflow||state.menu!==state.title)throw Error('admin page layout '+section+': '+JSON.stringify(state));
+      if(viewport.screenWidth===1920 && origin===origins[0]) {
+        const output=path.join(__dirname,'../output/admin-navigation-evidence');fs.mkdirSync(output,{recursive:true});
+        await evaluate(tab, `Promise.all(document.getAnimations().map(a=>a.finished.catch(()=>{})))`, true);
+        const shot=await tab.send('Page.captureScreenshot',{format:'png'});
+        fs.writeFileSync(path.join(output,section+'.png'),Buffer.from(shot.data,'base64'));
+      }
+    }
+    const navigationHistory=await tab.send('Page.getNavigationHistory');
+    await tab.send('Page.navigateToHistoryEntry',{entryId:navigationHistory.entries[navigationHistory.currentIndex-1].id});
+    await waitExpression(tab, `typeof adminReady!=='undefined'&&adminReady&&adminSection==='system'`, 'browser Back must restore previous admin category');
+    await clickAppointmentControl(tab, '#adminNav a[href="/admin.html?section=printing"]');
+    await waitExpression(tab, `typeof adminReady!=='undefined'&&adminReady&&adminSection==='printing'`, 'printing ready');
+    // Click the actual admin preview link: checking href or a separate HTTP
+    // request did not catch a demo process still serving the previous routes.
+    const oldPreview=await evaluate(tab, `({paper:document.querySelector('#s_medication_sheet_paper').value,font:document.querySelector('#s_medication_sheet_font').value})`);
+    await evaluate(tab, `document.querySelector('#s_medication_sheet_paper').value='A5';document.querySelector('#s_medication_sheet_font').value='24';document.querySelector('#s_medication_sheet_font').dispatchEvent(new Event('change',{bubbles:true}));true`);
+    const oldTargets=new Set((await cdpTargets(cdpPort)).map(t=>t.id));
+    await clickAppointmentControl(tab,'#previewMedication');
+    const previewTarget=await waitFor(async()=> (await cdpTargets(cdpPort)).find(t=>!oldTargets.has(t.id)&&t.url.includes('/print/sample/medication?paper=A5&font=24')), 'admin preview tab missing');
+    const previewClient=await new CdpClient(previewTarget.webSocketDebuggerUrl).connect();
+    try {
+      await waitExpression(previewClient, `window.medicationPaginationReady===true && document.querySelector('#medicationPages').textContent.includes('ยาตัวอย่าง') && document.querySelector('#medicationPages').textContent.includes('ข้อมูลสมมติ')`, 'admin preview must show sample medicines, not 404');
+    } finally { await previewClient.send('Page.close'); previewClient.socket.close(); }
+    await evaluate(tab, `document.querySelector('#s_medication_sheet_paper').value=${JSON.stringify(oldPreview.paper)};document.querySelector('#s_medication_sheet_font').value=${JSON.stringify(oldPreview.font)};document.querySelector('#s_medication_sheet_font').dispatchEvent(new Event('change',{bubbles:true}));true`);
+    const choiceKeys=['receipt_show_doctor','appt_slip_show_doctor','appt_slip_show_note'];
+    for(const value of ['0','1']) {
+      await clickAppointmentControl(tab,'#documentDisplayOptions > summary');
+      for(const key of choiceKeys) {
+        const selector='.document-choice[data-setting="s_'+key+'"] button[data-value="'+value+'"]';
+        await clickAppointmentControl(tab,selector);
+        const state=await evaluate(tab, `(()=>{const g=document.querySelector('.document-choice[data-setting="s_${key}"]'),b=g.querySelector('[data-value="${value}"]');return {pressed:b.getAttribute('aria-pressed'),count:g.querySelectorAll('[aria-pressed="true"]').length,value:document.querySelector('#s_${key}').value,color:getComputedStyle(b).backgroundColor,hidden:document.querySelector('#s_${key}').hidden};})()`);
+        if(state.pressed!=='true'||state.count!==1||state.value!==value||!state.hidden||state.color!==(value==='1'?'rgb(36, 94, 234)':'rgb(180, 35, 24)'))throw Error('document choice state/color incorrect '+JSON.stringify(state));
+      }
+      await clickAppointmentControl(tab,'#adminSave');
+      await waitExpression(tab,`!adminSaving&&!adminIsDirty()`,'document choices save');
+      const previousDocument=await evaluate(tab,'performance.timeOrigin');
+      await tab.send('Page.reload');
+      await waitExpression(tab,`performance.timeOrigin!==${previousDocument}&&typeof adminReady!=='undefined'&&adminReady&&${JSON.stringify(choiceKeys)}.every(k=>document.querySelector('#s_'+k).value==='${value}'&&document.querySelector('.document-choice[data-setting="s_'+k+'"] [data-value="${value}"]').getAttribute('aria-pressed')==='true')`,'document choices persist after reload');
+    }
+    // DOM edits and clicks exercise the real scoped save. Simulate an actual
+    // successful response being lost; read-back must confirm it, not post twice.
+    await evaluate(tab, `(() => {
+      window.adminTestFetch=window.fetch;window.adminTestPosts=[];window.adminConfirmCount=0;
+      window.fetch=async(url,opt={})=>{
+        if(url==='/api/settings'&&opt.method==='POST') {
+          adminTestPosts.push(JSON.parse(opt.body));const res=await adminTestFetch(url,opt);await res.clone().text();if(!res.ok)return res;
+          throw Error('synthetic reply lost after commit');
+        }return adminTestFetch(url,opt);
+      };
+      window.confirm=()=>{adminConfirmCount++;return false;};
+      const f=document.querySelector('#s_medication_sheet_font');f.value=f.value==='20'?'24':'20';f.dispatchEvent(new Event('change',{bubbles:true}));
+      document.querySelector('#s_backup_time').value='01:23';
+      return true;
+    })()`);
+    await clickAppointmentControl(tab, '#adminNav a[href="/admin.html?section=users"]');
+    if(!await evaluate(tab, `adminSection==='printing'&&adminConfirmCount===1&&adminIsDirty()`))throw Error('unsaved cancel did not preserve page');
+    await clickAppointmentControl(tab,'#adminSave');
+    try {
+      await waitExpression(tab, `!adminSaving&&!adminIsDirty()&&document.querySelector('#adminSaveState').textContent.includes('ไม่มีข้อมูลค้าง')`, 'lost response must resolve to saved state');
+    } catch(error) {
+      throw Error(error.message+' '+JSON.stringify(await evaluate(tab, `({error:document.querySelector('#adminSaveError').textContent,posts:adminTestPosts,state:document.querySelector('#adminSaveState').textContent})`)));
+    }
+    const scope=await evaluate(tab, `({posts:adminTestPosts.length,keys:Object.keys(adminTestPosts[0]),error:document.querySelector('#adminSaveError').textContent})`);
+    if(scope.posts!==1||scope.keys.some(k=>k.startsWith('backup_')||k.startsWith('clinic_'))||scope.error)throw Error('wrong save scope/retry: '+JSON.stringify(scope));
+    // Failure before commit: persistent error, retained input, then confirmed
+    // discard through the actual navigation handler.
+    await evaluate(tab, `window.fetch=async(url,opt={})=>{if(url==='/api/settings')throw Error('synthetic offline');return adminTestFetch(url,opt);};document.querySelector('#s_medication_sheet_font').value='18';true`);
+    await clickAppointmentControl(tab,'#adminSave');
+    await waitExpression(tab, `!adminSaving&&adminIsDirty()&&document.querySelector('#adminSaveError').textContent.includes('ยังยืนยันการบันทึกไม่ได้')`, 'failed save must retain input and visible error');
+    await evaluate(tab, `window.fetch=adminTestFetch;window.confirm=()=>true;true`);
+    await clickAppointmentControl(tab,'#adminNav a[href="/admin.html?section=clinic"]');
+    await waitExpression(tab, `typeof adminReady!=='undefined'&&adminReady&&adminSection==='clinic'`, 'confirmed discard navigation');
+    for(const route of ['/','/index.html','/exam.html','/calendar.html','/stock.html','/reports.html']) {
+      await tab.send('Page.navigate',{url:origin+route});
+      await waitExpression(tab, `location.pathname==='/admin.html'&&typeof adminReady!=='undefined'&&adminReady`, 'admin direct URL '+route);
+      if(!await evaluate(tab, `!document.documentElement.classList.contains('role-routing')&&!document.querySelector('#regCard')`))throw Error('clinical UI leaked on admin route');
+    }
+    // Actual self-reset buttons: successful write must lead to a visible login explanation.
+    const accountName='auth-ui-'+Date.now()+'-'+Math.floor(Math.random()*10000);
+    await evaluate(tab, `api('POST','/api/users',{username:${JSON.stringify(accountName)},display_name:'Synthetic UI admin',role:'admin',password:'Synthetic-ui-old-123'})`,true);
+    await tab.send('Page.navigate',{url:origin+'/login.html'});
+    await waitExpression(tab,`!!document.querySelector('#go')`,'synthetic login');
+    await evaluate(tab,`document.querySelector('#u').value=${JSON.stringify(accountName)};document.querySelector('#p').value='Synthetic-ui-old-123';document.querySelector('#go').click();true`,true);
+    await waitExpression(tab,`typeof adminReady!=='undefined'&&adminReady`,'synthetic admin ready');
+    await clickAppointmentControl(tab,'#adminNav a[href="/admin.html?section=users"]');
+    await waitExpression(tab,`typeof adminReady!=='undefined'&&adminReady&&adminSection==='users'`,'users category');
+    if(!await evaluate(tab,`!!document.querySelector('#accountChangeHelp a[href="/login.html"]')`))throw Error('persistent credential fallback missing');
+    await evaluate(tab,`resetPw(ME.user_id);true`,true);
+    await waitExpression(tab,`!!document.querySelector('#mPw1')`,'password modal');
+    await evaluate(tab,`document.querySelector('#mPw1').value='Synthetic-ui-new-123';document.querySelector('#mPw2').value='Synthetic-ui-new-123';true`);
+    await evaluate(tab,`(() => {const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='ตั้งรหัสผ่านใหม่');if(!b)throw Error('missing submit');b.click();return true;})()`,true);
+    await waitExpression(tab,`location.pathname==='/login.html'&&document.querySelector('#restartNote')?.textContent.includes('บันทึกการเปลี่ยนบัญชีแล้ว')&&!document.querySelector('#restartNote').classList.contains('hidden')`,'self reset visible outcome');
+    await evaluate(tab,`document.querySelector('#u').value=${JSON.stringify(accountName)};document.querySelector('#p').value='Synthetic-ui-new-123';document.querySelector('#go').click();true`,true);
+    await waitExpression(tab,`typeof adminReady!=='undefined'&&adminReady`,'new password works');
+    console.log('  PASS account reset: actual submit → visible reauthentication → new login @'+viewport.dpr+' '+new URL(origin).hostname);
+    console.log('  PASS admin pages '+new URL(origin).hostname+' @'+viewport.dpr+': 7 categories, scoped save, lost reply, unsaved cancel/discard, 6 direct URLs');
+  }
 }
 
 async function waitReady(base, token) {
@@ -266,7 +389,208 @@ async function issueCertificate(page, cdpPort, expectTab) {
   return notice;
 }
 
-async function runViewport({ edge, base, hostBase, cdpPort, viewport, checkHostDoctor, profileDir, crashRestart }) {
+async function clickAppointmentControl(page, selector) {
+  await page.send('Page.bringToFront');
+  const point = await evaluate(page, `(async () => { let el=document.querySelector(${JSON.stringify(selector)}); if(!el) throw Error('missing control'); el.scrollIntoView({block:'center'}); await new Promise(r=>setTimeout(r,260)); el=document.querySelector(${JSON.stringify(selector)}); if(!el) throw Error('control disappeared during refresh'); el.scrollIntoView({block:'center'}); const b=el.getBoundingClientRect(),x=b.left+b.width/2,y=b.top+b.height/2; if(!el.contains(document.elementFromPoint(x,y))) throw Error('appointment control covered: '+${JSON.stringify(selector)}+' hit='+document.elementFromPoint(x,y)?.outerHTML.slice(0,240)+' xy='+x+','+y); return {x,y}; })()`);
+  await page.send('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1});
+  await page.send('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',clickCount:1});
+}
+async function verifyAppointmentFollowup({page,front,base,hostBase,id,crashRestart,viewport,cdpPort}) {
+  // The admin scenario may have replaced the loopback cookie. Login front again explicitly.
+  await evaluate(front, `api('POST','/api/login',{username:'front',password:'front123'})`);
+  if (crashRestart) {
+    // Existing exam creation/cancellation share the same retry class as the new follow-up writes.
+    await waitExpression(page, `!!document.querySelector('#apptQ7')`, 'exam appointment button missing');
+    await evaluate(page, `(() => { const original=window.fetch; window.fetch=(url,options={})=>{if(String(url).endsWith('/appointment')) {window.fetch=original;options={...options,headers:{...options.headers,'X-Clinic-Test-Token':${JSON.stringify(crashRestart.token)},'X-Clinic-Test-Crash':'after-commit'}};}return original(url,options);};})()`);
+    await clickAppointmentControl(page,'#apptQ7'); await crashRestart.waitDown();
+    await waitExpression(page, `pendingExamAppointment && !pendingExamAppointment.sending && document.querySelector('#apptWriteResult button')`, 'exam unknown result must keep retry visible');
+    await crashRestart.start();
+    // Clicking a different date while result is unknown must resend the frozen original body.
+    await clickAppointmentControl(page,'#apptQ14');
+    await waitExpression(page, `!pendingExamAppointment && cur.appointment && cur.appointment.days===7 && document.querySelector('#apptWriteResult').textContent.includes('นัดแล้ว')`, 'exam must recover original appointment/date after crash');
+    const createdId=await evaluate(page,'cur.appointment.id');
+    const createdHistory=await evaluate(page,`api('GET','/api/appointments/${createdId}/history')`);
+    if(createdHistory.events.length!==1)throw Error('exam retry created duplicate appointment history');
+    await evaluate(page, 'window.confirm=()=>true');
+    await clickAppointmentControl(page,'#apptBody button[onclick^="cancelAppt"]');
+    await waitExpression(page, `!pendingExamAppointment && !cur.appointment && document.querySelector('#apptWriteResult').textContent.includes('ยกเลิกนัดแล้ว')`, 'exam cancellation result missing');
+  }
+  for(const [tab,url] of [[front,hostBase],[page,base]]) {
+    await tab.send('Page.navigate',{url:url+'/calendar.html'});
+    await waitExpression(tab,`typeof followAppts !== 'undefined' && followAppts.some(a=>a.id===${id})`,'follow-up list did not load');
+    await clickAppointmentControl(tab,'#followupTab');
+  }
+  const row='#pastFollowList [data-appointment-id="'+id+'"]';
+  const initial=await evaluate(front,`document.querySelector(${JSON.stringify(row)}).textContent`);
+  if(!initial.includes('ยังไม่ยืนยันการมา')||!initial.includes('0800000000'))throw Error('phone/unconfirmed status not visible');
+  if(await evaluate(front,'document.documentElement.scrollWidth > innerWidth+1'))throw Error('follow-up overflows horizontally');
+  await clickAppointmentControl(front,row+' button[onclick^="openAttendance"]');
+  await waitExpression(front,`!!document.querySelector('#attendanceStatus')`,'attendance dialog missing');
+  await evaluate(front,`document.querySelector('#attendanceStatus').value='no_show'`);
+  await clickAppointmentControl(front,'#appointmentSaveBtn');
+  await waitExpression(front,`!pendingAppointment && document.querySelector('#appointmentResult').textContent.includes('บันทึกสถานะการมาแล้ว')`,'attendance result not visible');
+  await clickAppointmentControl(front,row+' button[onclick^="openContact"]');
+  await waitExpression(front,`!!document.querySelector('#contactOutcome')`,'contact dialog missing');
+  await evaluate(front,`document.querySelector('#contactOutcome').value='not_answered';document.querySelector('#contactNote').value='<img src=x onerror=alert(1)> หมายเหตุสังเคราะห์'`);
+  if(crashRestart)await evaluate(front,`(() => { const original=window.fetch; window.fetch=(url,options={})=>{ if(String(url).endsWith('/${id}/contact')) {window.fetch=original;options={...options,headers:{...options.headers,'X-Clinic-Test-Token':${JSON.stringify(crashRestart.token)},'X-Clinic-Test-Crash':'after-commit'}};} return original(url,options); }; })()`);
+  await clickAppointmentControl(front,'#appointmentSaveBtn');
+  if(crashRestart){
+    await crashRestart.waitDown();
+    const disconnectStarted=Date.now();
+    try {
+      // A real disconnected HTTP POST can take longer than the 15s DOM wait to
+      // reject in Edge (observed twice, then confirmed by an extended probe).
+      // Keep every outcome assertion; allow up to 60s for transport failure.
+      await waitExpression(front,`pendingAppointment && !pendingAppointment.sending && document.querySelector('#appointmentRetryBtn') && document.querySelector('#appointmentFields').disabled`,'unknown result must freeze fields and keep retry visible',60000);
+      console.log(`  contact crash: retry visible after ${Date.now()-disconnectStarted} ms; fields remain frozen`);
+    } catch(error) {
+      const state=await evaluate(front,`({pending:!!pendingAppointment,sending:pendingAppointment?.sending,retry:!!document.querySelector('#appointmentRetryBtn'),disabled:document.querySelector('#appointmentFields')?.disabled,error:document.querySelector('#appointmentError')?.textContent})`);
+      throw Error(error.message+' '+JSON.stringify(state));
+    }
+    await crashRestart.start();
+    await clickAppointmentControl(front,'#appointmentSaveBtn');
+  }
+  await waitExpression(front,`!pendingAppointment && document.querySelector('#appointmentResult').textContent.includes('บันทึกผลโทรแล้ว')`,'contact success must remain visible');
+  const bannerVisible=await evaluate(front,`(() => {const r=document.querySelector('#appointmentResult').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;})()`);if(!bannerVisible)throw Error('persistent appointment result is outside viewport');
+  await clickAppointmentControl(front,'#appointmentResult button');
+  await waitExpression(front,`!!document.querySelector('#appointmentHistory')`,'history not visible');
+  const history=await evaluate(front,`({text:document.querySelector('#appointmentHistory').textContent,count:document.querySelectorAll('#appointmentHistory .history-event').length,images:document.querySelectorAll('#appointmentHistory img').length})`);
+  if(history.count!==2||history.images!==0||!history.text.includes('<img src=x onerror=alert(1)>'))throw Error('retry duplicated history or note did not escape');
+  // Browser refresh retains the history on the server; the second station sees the same state.
+  await page.send('Page.reload');
+  await waitExpression(page,`typeof followAppts!=='undefined' && followAppts.some(a=>a.id===${id} && a.attendance==='no_show' && a.contact_outcome==='not_answered')`,'second station did not see contact/no-show');
+  await clickAppointmentControl(page,'#followupTab');
+  await clickAppointmentControl(page,row+' button[onclick^="openContact"]');
+  await waitExpression(page,`!!document.querySelector('#contactOutcome')`,'rebook dialog missing');
+  await evaluate(page,`document.querySelector('#contactOutcome').value='rebooked';document.querySelector('#contactOutcome').dispatchEvent(new Event('change'))`);
+  await clickAppointmentControl(page,'#rebookFields button[onclick*="1,true"]');
+  const future=await evaluate(page,`document.querySelector('#contactDate').value`);
+  if(!future||future<=new Date().toISOString().slice(0,10))throw Error('relative month did not set visible future date');
+  await clickAppointmentControl(page,'#rebookFields button[onclick^="showDatePicker"]');
+  await waitExpression(page,`document.querySelectorAll('#appointmentMiniCalendar .mini-days button').length>27`,'mini calendar not visible');
+  const over=await evaluate(page,`document.querySelector('.modal-box').scrollWidth>document.querySelector('.modal-box').clientWidth+1`);
+  if(over)throw Error('rebooking dialog overflows horizontally');
+  // Screenshot artifacts are synthetic and remain local, for visual review.
+  const out=path.join(__dirname,'..','tmp','appointment-browser');fs.mkdirSync(out,{recursive:true});
+
+  await clickAppointmentControl(page,'#appointmentSaveBtn');
+  await waitExpression(page,`!pendingAppointment && document.querySelector('#appointmentResult').textContent.includes('บันทึกผลโทรแล้ว')`,'rebook result missing');
+  await clickAppointmentControl(page,'#appointmentResult button');
+  await waitExpression(page,`document.querySelectorAll('#appointmentHistory .history-event').length===4`,'atomic rebook/contact history missing or duplicated');
+  const result=await evaluate(page,`api('GET','/api/appointments/${id}/history')`);
+  if(result.appointment.appt_date!==future||result.appointment.attendance!=='unconfirmed')throw Error('rebook must move same appointment and reset attendance for new date');
+  await clickAppointmentControl(page,'#modalBack button[onclick^="openPrintWindow"]');
+  await waitFor(async()=> (await cdpTargets(cdpPort)).some(t=>t.url.includes('/print/appointment/'+id)) || await evaluate(page,`!!document.querySelector('#printFallbacks a')`),'appointment slip tab/fallback missing');
+  console.log(`  PASS appointment browser ${viewport.screenWidth}@${viewport.dpr}: explicit no-show, contact/history, shared stations, rebook/date picker, print${crashRestart?', real crash after commit + same-request retry':''}`);
+}
+async function verifyMonthlyDrugs(tab, origin, viewport) {
+  await tab.send('Page.navigate', { url: origin + '/reports.html' });
+  await waitExpression(tab, `!!document.querySelector('#drugMonthDetails') && ME`, 'รายงานยายังไม่พร้อม');
+  await evaluate(tab, `(() => { document.querySelector('#drugMonthDetails summary').click(); return true; })()`, true);
+  await waitExpression(tab, `document.querySelector('#drugMonthTable tbody tr') && document.querySelector('#drugMonthStatus').textContent.includes('ข้อมูล ณ')`, 'เปิดรายงานแล้วต้องเห็นตารางและเวลาข้อมูล');
+  await waitExpression(tab, `document.querySelector('#drugSummary').textContent.includes('ข้อมูลทุนไม่ครบ') && document.querySelector('#cards').textContent.includes('ยังคำนวณไม่ได้')`, 'รายงานเดิมต้องไม่แสดงกำไรจากทุนที่ขาดเป็นศูนย์');
+  const values = await evaluate(tab, `(() => {
+    const rows=[...document.querySelectorAll('#drugMonthTable tbody tr')];
+    const known=rows.find(r=>r.innerText.includes('ยาสังเคราะห์รายงาน A'));
+    const unknown=rows.find(r=>r.innerText.includes('ยาสังเคราะห์รายงาน B'));
+    return { known:known?[...known.cells].slice(1,7).map(c=>c.textContent):null,
+      unknown:unknown&&unknown.innerText.includes('ข้อมูลต้นทุนไม่ครบ')&&unknown.cells[6].textContent==='ต้องตรวจ' };
+  })()`);
+  if (JSON.stringify(values.known)!==JSON.stringify(['10','100.00','10.00','90.00','20.00','70.00']) || !values.unknown) throw new Error('ยอดยา/ส่วนลด/ต้นทุน/กำไรหรือคำเตือนทุนขาดบนจอไม่ตรงบิลสังเคราะห์');
+  const layout = await evaluate(tab, `(() => {
+    const c=document.querySelector('#drugMonthCard'); c.scrollIntoView({block:'start'});
+    const r=c.getBoundingClientRect();
+    const controls=['drugMonth','drugMonthSort','drugMonthRetry'].map(id=>document.getElementById(id).getBoundingClientRect());
+    return { fits:r.left>=0&&r.right<=innerWidth+1, noOverlap:controls.every((a,i)=>controls.slice(i+1).every(b=>a.right<=b.left||b.right<=a.left||a.bottom<=b.top||b.bottom<=a.top)), note:c.innerText.includes('ไม่ใช่ยอดสิ้นเดือน') };
+  })()`);
+  if (!layout.fits || !layout.noOverlap || !layout.note) throw new Error('รายงานยาล้น/ช่องซ้อน/ไม่บอกว่าสต็อกเป็นปัจจุบัน');
+  if (process.env.CLINIC_DRUG_REPORT_EVIDENCE) {
+    const output = path.resolve(process.env.CLINIC_DRUG_REPORT_EVIDENCE);
+    fs.mkdirSync(output, { recursive: true });
+    const shot = await tab.send('Page.captureScreenshot', { format: 'png' });
+    fs.writeFileSync(path.join(output, `drugs-${viewport.screenWidth}-${viewport.dpr}-${new URL(origin).hostname}.png`), Buffer.from(shot.data, 'base64'));
+  }
+  await evaluate(tab, `(() => { const m=document.querySelector('#drugMonth'); m.value='2020-02'; m.dispatchEvent(new Event('change')); return true; })()`, true);
+  await waitExpression(tab, `document.querySelector('#drugMonthStatus').textContent.includes('เดือน 2020-02') && document.querySelector('#drugMonthTable tbody tr')`, 'เปลี่ยนเดือนแล้วต้องเห็นผลเดือนใหม่');
+  await evaluate(tab, `(() => { document.querySelector('#drugMonthSort').value='profit'; document.querySelector('#drugMonthSort').dispatchEvent(new Event('change')); window.__drugApi=window.api; window.api=(method,url,...args)=>url.includes('/reports/drugs-monthly')?Promise.reject(new Error('ทดสอบเครือข่ายขัดข้อง')):window.__drugApi(method,url,...args); document.querySelector('#drugMonthRetry').click(); return true; })()`, true);
+  await waitExpression(tab, `document.querySelector('#drugMonthStatus').textContent.includes('โหลดรายงานไม่สำเร็จ') && !document.querySelector('#drugMonthTable tr')`, 'โหลดไม่สำเร็จต้องแจ้งค้างไว้และไม่โชว์ข้อมูลเก่า');
+  await evaluate(tab, `(() => { window.api=window.__drugApi; document.querySelector('#drugMonthRetry').click(); return true; })()`, true);
+  await waitExpression(tab, `document.querySelector('#drugMonthStatus').textContent.includes('ข้อมูล ณ') && document.querySelector('#drugMonthTable tbody tr')`, 'กดลองใหม่แล้วตารางต้องกลับมา');
+  // Exercise out-of-order reads without writing anything to the isolated server.
+  await evaluate(tab, `(() => { const original=window.api; window.api=async(method,url,...args)=>{const result=await original(method,url,...args); if(url.includes('month=2020-01')) await new Promise(r=>setTimeout(r,600)); return result;}; const m=document.querySelector('#drugMonth');m.value='2020-01';m.dispatchEvent(new Event('change'));m.value='2020-02';m.dispatchEvent(new Event('change'));return true; })()`, true);
+  await waitExpression(tab, `document.querySelector('#drugMonthStatus').textContent.includes('เดือน 2020-02')`, 'คำตอบเดือนล่าสุดไม่ปรากฏ');
+  await new Promise(resolve => setTimeout(resolve, 850));
+  if (!await evaluate(tab, `document.querySelector('#drugMonthStatus').textContent.includes('เดือน 2020-02')`)) throw new Error('คำตอบช้าของเดือนเก่าทับเดือนใหม่');
+  console.log('  PASS monthly drug report: ' + new URL(origin).hostname + ' visible table, responsive controls, month/sort, error/retry, stale response');
+}
+
+async function verifyMedicationSheet({page,front,base,hostBase,receiptNo,viewport,first}) {
+  // Set through the real admin form; save remains the existing idempotent settings operation.
+  await evaluate(front, `api('POST','/api/login',{username:'admin',password:'admin1234'})`);
+  await front.send('Page.navigate',{url:hostBase+'/admin.html?section=printing'});
+  await waitExpression(front, `typeof adminReady!=='undefined' && adminReady`, 'admin settings not loaded');
+  for (const value of ['0','1']) {
+    await evaluate(front, `document.querySelector('#s_medication_sheet_enabled').value=${JSON.stringify(value)};true`);
+    await clickAppointmentControl(front, '#adminSave');
+    await waitFor(()=>evaluate(front, `(async()=> (await api('GET','/api/settings')).medication_sheet_enabled===${JSON.stringify(value)})()`),'medication enable switch not saved');
+    const hasLink=await evaluate(front, `(async()=> (await (await fetch('/print/receipt/'+${JSON.stringify(receiptNo)})).text()).includes('id="medicationSheetLink"'))()`);
+    if(hasLink!==(value==='1'))throw Error('receipt button ignores medication setting');
+  }
+  await evaluate(front, `api('POST','/api/login',{username:'front',password:'front123'})`);
+  for(const [tab,origin,station] of [[page,base,'lan'],[front,hostBase,'front']]) {
+    await tab.send('Page.navigate',{url:origin+'/print/receipt/'+encodeURIComponent(receiptNo)});
+    await waitExpression(tab,`!!document.querySelector('#medicationSheetLink')`,'medicine link missing');
+    await clickAppointmentControl(tab,'#medicationSheetLink');
+    await waitExpression(tab,`!!document.querySelector('#printMedication')`,'medicine click did not show sheet');
+    await waitExpression(tab,`window.medicationPaginationReady===true`,'medicine pagination failed');
+    const content=await evaluate(tab,`document.querySelector('#medicationPages').innerText`);
+    if(!content.includes('ยาสังเคราะห์รายงาน A')||!content.includes('คำสั่งสังเคราะห์'))throw Error('medicine snapshot instructions missing');
+    await evaluate(tab,`window.__printCount=0;window.print=()=>window.__printCount++`);
+    await clickAppointmentControl(tab,'#printMedication');
+    await waitExpression(tab,`window.__printCount===1`,'explicit print not reached');
+    // Lost GET response is safely retryable; error must stay visible and no print issued.
+    await evaluate(tab,`window.__savedFetch=window.fetch;window.fetch=async()=>{throw new TypeError('synthetic lost response')};true`);
+    await clickAppointmentControl(tab,'#printMedication');
+    await waitExpression(tab,`document.querySelector('#printError').textContent.includes('ติดต่อเครื่องหลักไม่ได้') && window.__printCount===1 && !document.querySelector('#printMedication').disabled`,'print failure must show persistent retryable error');
+    await evaluate(tab,`window.fetch=window.__savedFetch;true`);
+    await clickAppointmentControl(tab,'#printMedication');
+    await waitExpression(tab,`window.__printCount===2`,'print retry failed');
+    for(const paper of ['A4','A5'])for(const font of ['18','20','24']) {
+      await evaluate(tab,`document.querySelector('[name=paper]').value='${paper}';document.querySelector('[name=font]').value='${font}';true`);
+      await clickAppointmentControl(tab,'button[type=submit]');
+      await waitExpression(tab,`location.search.includes('paper=${paper}') && location.search.includes('font=${font}') && window.medicationPaginationReady===true`,'paper/font selection did not navigate');
+      const layout=await evaluate(tab,`(()=>{const body=getComputedStyle(document.body),e=document.querySelector('#medicationPages .instructions'),r=e.getBoundingClientRect();return {size:parseFloat(body.fontSize),overflow:document.documentElement.scrollWidth>innerWidth+1,visible:r.width>0};})()`);
+      if(layout.size<23.99||layout.overflow||!layout.visible)throw Error('medicine layout unreadable '+JSON.stringify(layout));
+      const integrity=await evaluate(tab,`(()=>{const pages=[...document.querySelectorAll('.print-page')],source=[...document.querySelectorAll('#medicationSource .instructions')];return pages.every(p=>p.querySelector('.identity')&&p.querySelector('.medicine')&&[...p.querySelectorAll('.medicine')].every(m=>m.getBoundingClientRect().bottom<=p.querySelector('.page-content').getBoundingClientRect().bottom)) && source.every((s,i)=>[...document.querySelectorAll('#medicationPages [data-medicine-index="'+i+'"] .instructions')].map(e=>e.textContent).join('')===s.textContent);})()`);
+      if(!integrity)throw Error('pagination lost instructions, identity, or overflowed a physical page');
+      const visual=await evaluate(tab,`(()=>{const grid=document.querySelector('#medicationPages .dose-grid');return {cells:grid?.children.length,columns:grid?getComputedStyle(grid).gridTemplateColumns.split(' ').length:0,fallback:!!document.querySelector('#medicationPages [data-medicine-index="1"] .text-dose-label'),icons:grid?.querySelectorAll('svg').length};})()`);
+      if(visual.cells!==4||visual.columns!==(paper==='A5'?2:4)||!visual.fallback||visual.icons!==4)throw Error('proven dose graphic missing or unsafe fallback '+paper+'/'+font+' '+JSON.stringify(visual));
+      if(first && station==='front' && process.env.CLINIC_MEDICATION_EVIDENCE) {
+        const out=path.resolve(process.env.CLINIC_MEDICATION_EVIDENCE); fs.mkdirSync(out,{recursive:true});
+        const pdf=await tab.send('Page.printToPDF',{preferCSSPageSize:true,printBackground:true,displayHeaderFooter:false});
+        fs.writeFileSync(path.join(out,`medication-${paper}-${font}.pdf`),Buffer.from(pdf.data,'base64'));
+      }
+    }
+    const longPass=await evaluate(tab,`(()=>{const s=document.querySelector('#medicationSource .instructions'),original=s.textContent;s.textContent=original.repeat(40);paginateMedication();const text=[...document.querySelectorAll('#medicationPages [data-medicine-index="0"] .instructions')].map(e=>e.textContent).join('');const pages=[...document.querySelectorAll('.print-page')];return text===s.textContent && pages.length>2 && !document.querySelector('#medicationPages [data-medicine-index="0"] .dose-visual') && !!document.querySelector('.continuation-notice') && pages.every(p=>p.querySelector('.identity')&&p.querySelector('.medicine')&&[...p.querySelectorAll('.medicine')].every(m=>m.getBoundingClientRect().bottom<=p.querySelector('.page-content').getBoundingClientRect().bottom));})()`);
+    if(!longPass)throw Error('long literal instructions lost or overflowed across pages');
+    for(const style of ['text','visual']) {
+      await evaluate(tab,`document.querySelector('[name=style]').value='${style}';true`);
+      await clickAppointmentControl(tab,'button[type=submit]');
+      await waitExpression(tab,`location.search.includes('style=${style}') && window.medicationPaginationReady===true`,'style selector did not show result');
+      const graphic=await evaluate(tab,`!!document.querySelector('#medicationPages .dose-visual')`);
+      if(graphic!==(style==='visual'))throw Error('visual/text choice ignored');
+    }
+    console.log(`  medication ${station}: link + explicit print + failed response/retry + six paper/font choices + long instructions`);
+  }
+  // An already-open document must not print after the master switch is turned off.
+  const admin=new ApiSession(hostBase);await admin.request('POST','/api/login',{username:'admin',password:'admin1234'});
+  await admin.request('POST','/api/settings',{medication_sheet_enabled:'0'});
+  await evaluate(front,`window.__printCount=0;window.print=()=>window.__printCount++`);
+  await clickAppointmentControl(front,'#printMedication');
+  await waitExpression(front,`document.querySelector('#printError').textContent.includes('ปิดใช้') && window.__printCount===0`,'stale medicine page printed after disable');
+}
+
+async function runViewport({ edge, base, hostBase, cdpPort, viewport, checkHostDoctor, profileDir, crashRestart, appointmentId, medicationReceipt, backupCloudDir }) {
   const cssWidth = Math.floor(viewport.screenWidth / viewport.dpr);
   const cssHeight = Math.floor(viewport.screenHeight / viewport.dpr);
   const edgeProcess = spawn(edge, [
@@ -317,6 +641,48 @@ async function runViewport({ edge, base, hostBase, cdpPort, viewport, checkHostD
       screenHeight: viewport.screenHeight,
     });
 
+    if (process.env.CLINIC_BROWSER_TRIAL_TOOLS_ONLY === '1') {
+      await require('./test-trial-tools-browser')({tab:page,origins:[hostBase,base],viewport,evaluate,waitExpression,clickControl:clickAppointmentControl});
+      return;
+    }
+    if (process.env.CLINIC_BROWSER_PASSWORD_ONLY === '1') {
+      await require('./test-password-recovery-browser')({tab:page,origins:[hostBase,base],viewport,cloudDir:backupCloudDir,evaluate,waitExpression,clickControl:clickAppointmentControl});
+      return;
+    }
+    if (process.env.CLINIC_BROWSER_BACKUP_ONLY === '1') {
+      await require('./test-backup-status-browser')({tab:page,origins:[hostBase,base],viewport,cloudDir:backupCloudDir,evaluate,waitExpression,clickControl:clickAppointmentControl});
+      return;
+    }
+    if (process.env.CLINIC_BROWSER_DOSE_ONLY === '1') {
+      await require('./test-dose-defaults-browser')({tab:page,origins:[hostBase,base],viewport,evaluate,waitExpression,clickControl:clickAppointmentControl});
+      return;
+    }
+    if (process.env.CLINIC_BROWSER_SOLO_ONLY === '1') {
+      await require('./test-solo-doctor-browser')({tab:page,origins:[hostBase,base],viewport,evaluate,waitExpression,clickControl:clickAppointmentControl});
+      return;
+    }
+    if (process.env.CLINIC_BROWSER_SERVICE_COST_ONLY === '1') {
+      await require('./test-service-cost-browser')({tab:page,origins:[hostBase,base],viewport,evaluate,waitExpression,clickControl:clickAppointmentControl});
+      return;
+    }
+    if (process.env.CLINIC_BROWSER_MULTI_DOCTOR_ONLY === '1' || process.env.CLINIC_BROWSER_LABELS_ONLY === '1') {
+      const other=await client.send('Target.createTarget',{url:'about:blank'});
+      const a=await client.send('Target.attachToTarget',{targetId:other.targetId,flatten:true});
+      const admin={send:(method,params={})=>client.send(method,params,a.sessionId)};
+      await admin.send('Page.enable');await admin.send('Runtime.enable');
+      await admin.send('Emulation.setDeviceMetricsOverride',{width:cssWidth,height:cssHeight,deviceScaleFactor:viewport.dpr,mobile:false});
+      if(process.env.CLINIC_BROWSER_LABELS_ONLY==='1'){
+        await require('./test-drug-labels-browser')({page,front:admin,base,hostBase,receiptNo:medicationReceipt,viewport,first:checkHostDoctor,evaluate,waitExpression,clickControl:clickAppointmentControl,ApiSession});
+        return;
+      }
+      await require('./test-multi-doctor-browser')({client,page,admin,base,hostBase,viewport,evaluate,waitExpression});
+      return;
+    }
+    if (process.env.CLINIC_BROWSER_ADMIN_ONLY === '1') {
+      stage = 'admin targeted diagnostic';
+      await verifyAdminPages(page, [hostBase, base], viewport, cdpPort);
+      return;
+    }
     // ---------- สถานีที่ 1: เครื่องห้องตรวจ เข้าผ่าน LAN IP (ไม่มีเครื่องพิมพ์) ----------
     stage = 'ห้องตรวจ: login';
     await page.send('Page.navigate', { url: `${base}/login.html` });
@@ -503,7 +869,7 @@ async function runViewport({ edge, base, hostBase, cdpPort, viewport, checkHostD
         set('r_cc', 'ทดสอบ server ตายหลัง commit'); return true; })()`);
       // ยิงคำขอแบบเดียวกับปุ่ม "บันทึก + เข้าคิวเลย" ด้วย op_id จริงของหน้า + สั่ง server ตายหลัง commit ก่อนตอบ
       const crashShot = await evaluate(front, `(async () => { try {
-        const res = await fetch('/api/patients', { method: 'POST',
+        const res = await fetch('/api/patients', { method: 'POST', signal: AbortSignal.timeout(4000),
           headers: { 'Content-Type': 'application/json',
             'X-Clinic-Test-Token': ${JSON.stringify(crashRestart.token)}, 'X-Clinic-Test-Crash': 'after-commit' },
           body: JSON.stringify({ first_name: document.getElementById('r_first').value,
@@ -572,11 +938,11 @@ async function runViewport({ edge, base, hostBase, cdpPort, viewport, checkHostD
       await adminTab.send('Page.navigate', { url: `${hostBase}/login.html` });
       await waitExpression(adminTab, `document.readyState === 'complete' && !!document.querySelector('#go')`, 'หน้า login ผู้ดูแลไม่พร้อม');
       await evaluate(adminTab, `(() => { document.querySelector('#u').value = 'admin'; document.querySelector('#p').value = 'admin1234'; document.querySelector('#go').click(); return true; })()`, true);
-      await waitExpression(adminTab, `location.pathname === '/' && typeof toast === 'function'`, 'ผู้ดูแล login ไม่สำเร็จ');
-      await adminTab.send('Page.navigate', { url: `${hostBase}/admin.html` });
+      await waitExpression(adminTab, `location.pathname === '/admin.html' && typeof adminReady !== 'undefined' && adminReady`, 'ผู้ดูแลต้องเข้าพื้นที่ตั้งค่าโดยไม่ผ่านหน้าร้าน');
+      await adminTab.send('Page.navigate', { url: `${hostBase}/admin.html?section=system` });
       await waitExpression(adminTab, `location.pathname === '/admin.html' && typeof watchUpdateProgress === 'function' && ME && ME.role === 'admin' && !!document.querySelector('#updateSummary')`, 'หน้าตั้งค่าไม่พร้อม');
       stage = 'ผู้ดูแล: เริ่มเฝ้าอัปเดตแล้ว session หาย';
-      await verifyAbout(adminTab, `${hostBase}/admin.html`, true);
+      await verifyAbout(adminTab, `${hostBase}/admin.html?section=system`, true);
       const currentVersion = await evaluate(adminTab, `api('GET', '/api/update/status').then(st => st.current_version)`);
       if (!currentVersion) throw new Error('อ่านรุ่นปัจจุบันจาก /api/update/status ไม่ได้');
       await evaluate(adminTab, `(() => {
@@ -599,6 +965,27 @@ async function runViewport({ edge, base, hostBase, cdpPort, viewport, checkHostD
       hostDoctorNote += `; ผู้ดูแลกดอัปเดต→session หาย→login→เห็นแถบเขียวรุ่น ${currentVersion}`;
     }
 
+    stage = 'นัดหมาย: ติดตาม/โทร/นัดใหม่/ผลบนจอ';
+    await verifyAppointmentFollowup({page,front,base,hostBase,id:appointmentId,crashRestart,viewport,cdpPort});
+    stage = 'รายงานยารายเดือน: สองสถานี';
+    await verifyMonthlyDrugs(page, base, viewport);
+    await verifyMonthlyDrugs(front, hostBase, viewport);
+    stage = 'ใบยาอ่านง่าย: ตั้งค่า/พิมพ์/ขนาดจริง/ตอบกลับหาย';
+    await verifyMedicationSheet({page,front,base,hostBase,receiptNo:medicationReceipt,viewport,first:checkHostDoctor});
+    stage = 'ฉลากยา: เลือกรายการ / ข้อความล้น / พิมพ์ซ้ำ / ช่องกระดาษจริง';
+    await require('./test-drug-labels-browser')({page,front,base,hostBase,receiptNo:medicationReceipt,viewport,first:checkHostDoctor,evaluate,waitExpression,clickControl:clickAppointmentControl,ApiSession});
+    stage = 'admin: หมวด/บันทึกเฉพาะหน้า/ตอบกลับหาย/ลิงก์ตรง';
+    await verifyAdminPages(front, [hostBase,base], viewport, cdpPort);
+    stage = 'หมอหลายคน: profile แยก / นัดกลับหมอเดิม / ซ่อนเมื่อหมอคนเดียว';
+    await require('./test-multi-doctor-browser')({client,page,admin:front,base,hostBase,viewport,evaluate,waitExpression});
+    stage = 'ต้นทุนหัตถการ: เพิ่ม/แก้/คำตอบหาย/รายงาน';
+    await require('./test-service-cost-browser')({tab:front,origins:[hostBase,base],viewport,evaluate,waitExpression,clickControl:clickAppointmentControl});
+    await require('./test-solo-doctor-browser')({tab:front,origins:[hostBase,base],viewport,evaluate,waitExpression,clickControl:clickAppointmentControl});
+    stage = 'ตารางวิธีใช้เริ่มต้น: คลังยาไปห้องตรวจ / คำตอบหาย / ข้อความเก่า';
+    await require('./test-dose-defaults-browser')({tab:front,origins:[hostBase,base],viewport,evaluate,waitExpression,clickControl:clickAppointmentControl});
+    await require('./test-backup-status-browser')({tab:front,origins:[hostBase,base],viewport,cloudDir:backupCloudDir,evaluate,waitExpression,clickControl:clickAppointmentControl});
+    await require('./test-password-recovery-browser')({tab:front,origins:[hostBase,base],viewport,cloudDir:backupCloudDir,evaluate,waitExpression,clickControl:clickAppointmentControl});
+    await require('./test-trial-tools-browser')({tab:front,origins:[hostBase,base],viewport,evaluate,waitExpression,clickControl:clickAppointmentControl});
     console.log(`  PASS ${viewport.screenWidth}x${viewport.screenHeight}@${viewport.dpr} (CSS ${cssWidth}x${cssHeight})`
       + ` → หมอออก ${certNo} ที่คิว ${queueNo} โดยไม่เด้งแท็บ, หน้าร้านพิมพ์ ${new URL(printTarget.url).pathname}`
       + `; registration ${layout.controls} controls ไม่ซ้อน; หน้าร้าน ${frontCols} คอลัมน์${billInfo.skipped ? '' : `, บิล ${billInfo.lines} รายการไม่ล้น`}${crashNote}${hostDoctorNote}`);
@@ -616,6 +1003,9 @@ async function runViewport({ edge, base, hostBase, cdpPort, viewport, checkHostD
   const edge = findEdge();
   const lanIp = findLanIPv4();
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clinic-browser-data-'));
+  const backupCloudDir = path.join(dataDir, 'cloud-status-synthetic');
+  fs.mkdirSync(backupCloudDir);
+  fs.writeFileSync(path.join(backupCloudDir, 'not-a-directory'), 'synthetic fixture');
   const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'clinic-edge-profile-'));
   const certDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clinic-browser-cert-'));
   const token = crypto.randomBytes(24).toString('hex');
@@ -637,6 +1027,17 @@ async function runViewport({ edge, base, hostBase, cdpPort, viewport, checkHostD
   try {
     const seeded = spawnSync(process.execPath, ['--no-warnings', 'seed.js', '--demo'], { cwd: __dirname, env, encoding: 'utf8' });
     if (seeded.status !== 0) throw new Error(seeded.stderr || seeded.stdout || 'seed failed');
+    const serviceSeed=spawnSync(process.execPath,['--no-warnings','-e',`const {db}=require('./lib/db');
+db.exec("INSERT INTO patients(hn,first_name,sex,created_at) VALUES('SERVICE-SYNTH','สังเคราะห์ต้นทุน','F','2020-03-15'); INSERT INTO visits(hn,visit_date,queue_no,state,created_by,created_at) VALUES('SERVICE-SYNTH','2020-03-15',1,'COMPLETED',1,'2020-03-15 12:00:00')");
+const v=db.prepare("SELECT id FROM visits WHERE hn='SERVICE-SYNTH'").get().id;
+const ov=Number(db.prepare("INSERT INTO order_versions(visit_id,version,lines_json,created_by,created_at) VALUES(?,1,'[]',1,'2020-03-15 12:00:00')").run(v).lastInsertRowid);
+db.prepare("INSERT INTO receipts(receipt_no,visit_id,hn,patient_name,order_version_id,subtotal,discount,total,pay_method,status,created_by,created_at) VALUES('SERVICE-SYNTH',?,'SERVICE-SYNTH','สมมติ',?,300,0,300,'cash','ISSUED',1,'2020-03-15 12:00:00')").run(v,ov);
+db.exec("INSERT INTO receipt_lines(receipt_no,line_type,name,qty,unit,price_each,amount,cost_each) VALUES('SERVICE-SYNTH','service','หัตถการสังเคราะห์',1,'ครั้ง',300,300,120)");db.close();`],{cwd:__dirname,env,encoding:'utf8',windowsHide:true});
+    if(serviceSeed.status!==0)throw Error(serviceSeed.stderr);
+    const apptSeed = spawnSync(process.execPath,['--no-warnings','-e',`const {db,now,today}=require('./lib/db');const p=require('./lib/patients');const user=db.prepare("SELECT id FROM users WHERE username='front'").get().id;const d=new Date(today()+'T00:00:00');d.setDate(d.getDate()-2);const past=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');const ids=[];for(let i=0;i<4;i++){const hn=p.register({first_name:'ติดตามสังเคราะห์'+i,last_name:'ทดสอบชื่อและนามสกุลภาษาไทยยาว',phone:'0800000000',sex:'F'},user);ids.push(Number(db.prepare('INSERT INTO appointments (hn,appt_date,days,created_by,created_at) VALUES (?,?,?,?,?)').run(hn,past,0,user,now()).lastInsertRowid));}console.log(JSON.stringify(ids));db.close();`],{cwd:__dirname,env,encoding:'utf8',windowsHide:true});
+    if(apptSeed.status!==0)throw Error(apptSeed.stderr);
+    const appointmentIds=JSON.parse(apptSeed.stdout.trim());
+
     server = spawn(process.execPath, ['--no-warnings', 'server.js'], {
       cwd: __dirname,
       env,
@@ -678,6 +1079,21 @@ async function runViewport({ edge, base, hostBase, cdpPort, viewport, checkHostD
       await doc.request('POST', `/api/visits/${payVisit.id}/finish-exam`, { note: { cc: 'ทดสอบบิล', dx_text: 'ตรวจสุขภาพ' }, lines, base_version_id: null });
     }
 
+    let medicationReceipt;
+    // A paid synthetic bill specifically proves visible report arithmetic, not only an empty table.
+    {
+      const doc = new ApiSession(base);
+      await doc.request('POST','/api/login',{username:'doctor',password:'doctor123'});
+      const known = await front.request('POST','/api/drugs',{name:'ยาสังเคราะห์รายงาน A',unit:'เม็ด',price:10,cost:2});
+      const unknown = await front.request('POST','/api/drugs',{name:'ยาสังเคราะห์รายงาน B',unit:'เม็ด',price:10,cost:null});
+      for(const item of [known,unknown]) await front.request('POST',`/api/drugs/${item.id}/receive`,{qty:100,reason:'ข้อมูลสังเคราะห์',expiry_date:'2027-12-31',op_id:crypto.randomUUID()});
+      const patient = await front.request('POST','/api/patients',{first_name:'รายงานยา',last_name:'สังเคราะห์',sex:'F'});
+      const visit = await front.request('POST','/api/visits',{hn:patient.hn});
+      await doc.request('POST',`/api/visits/${visit.id}/call`,{});
+      const order = await doc.request('POST',`/api/visits/${visit.id}/finish-exam`,{note:{cc:'สังเคราะห์',dx_text:'ทดสอบรายงาน'},lines:[{type:'drug',ref_id:known.id,qty:10,dose:{mode:'standard',m:1,e:1,timing:'หลังอาหาร',days:5}},{type:'drug',ref_id:unknown.id,qty:10,instructions:'คำสั่งสังเคราะห์แบบเมื่อมีอาการ\nคงข้อความเดิมที่แพทย์บันทึก ไม่แปลงเป็นมื้ออาหาร\nตัวอย่างเพิ่มเติมสำหรับตรวจการขึ้นหน้าถัดไปเมื่อใช้ A5 ตัวใหญ่พิเศษ'}],base_version_id:null});
+      const paid=await front.request('POST',`/api/visits/${visit.id}/pay`,{order_version_id:order.order.id,discount:20,discount_reason:'สังเคราะห์',pay_method:'cash',op_id:crypto.randomUUID()});
+      medicationReceipt=paid.receiptNo;
+    }
     console.log(`BROWSER OUTCOME TEST — ห้องตรวจผ่าน HTTPS LAN ${lanIp}:${httpsPort}, หน้าร้านผ่าน HTTP 127.0.0.1, fresh profile, synthetic temp DB`);
     // สถานีที่ 4 (viewport แรก) ฆ่า server จริงแล้วเปิดกลับ — helper นี้คุม lifecycle ของ server ที่ viewport ใช้ร่วมกัน
     const crashRestart = {
@@ -703,9 +1119,30 @@ async function runViewport({ edge, base, hostBase, cdpPort, viewport, checkHostD
         checkHostDoctor: i === 0,
         profileDir,
         crashRestart: i === 0 ? crashRestart : null,
+        appointmentId: appointmentIds[i],
+        medicationReceipt,
+        backupCloudDir,
       });
     }
-    console.log(`\nBROWSER PASS: ${VIEWPORTS.length}/${VIEWPORTS.length} viewports — ห้องตรวจไม่เด้งแท็บ, หน้าร้านพิมพ์ได้จริงและป้ายหาย, ฟอร์มไม่ซ้อน`);
+    if (process.env.CLINIC_BROWSER_TRIAL_TOOLS_ONLY === '1') {
+      console.log(`TRIAL UI BROWSER PASS: ${VIEWPORTS.length}/${VIEWPORTS.length} focused; helper boundary mocked`);
+    } else if (process.env.CLINIC_BROWSER_PASSWORD_ONLY === '1') {
+      console.log(`PASSWORD BROWSER PASS: ${VIEWPORTS.length}/${VIEWPORTS.length} focused, NOT the full browser gate`);
+    } else if (process.env.CLINIC_BROWSER_BACKUP_ONLY === '1') {
+      console.log(`BACKUP STATUS BROWSER PASS: ${VIEWPORTS.length}/${VIEWPORTS.length} targeted, NOT the full browser gate`);
+    } else if (process.env.CLINIC_BROWSER_SOLO_ONLY === '1') {
+      console.log('SOLO BROWSER PASS: 4/4 targeted, not full browser gate');
+    } else if (process.env.CLINIC_BROWSER_SERVICE_COST_ONLY === '1') {
+      console.log(`SERVICE COST BROWSER PASS: ${VIEWPORTS.length}/${VIEWPORTS.length} targeted, NOT the full browser gate`);
+    } else if (process.env.CLINIC_BROWSER_LABELS_ONLY === '1') {
+      console.log(`LABELS BROWSER PASS: ${VIEWPORTS.length}/${VIEWPORTS.length} targeted, NOT the full browser gate`);
+    } else if (process.env.CLINIC_BROWSER_MULTI_DOCTOR_ONLY === '1') {
+      console.log(`MULTI DOCTOR BROWSER PASS: ${VIEWPORTS.length}/${VIEWPORTS.length} targeted, NOT the full browser gate`);
+    } else if (process.env.CLINIC_BROWSER_ADMIN_ONLY === '1') {
+      console.log(`\nADMIN BROWSER PASS: ${VIEWPORTS.length}/${VIEWPORTS.length} viewports × 2 origins — targeted admin only, NOT the full browser gate`);
+    } else {
+      console.log(`\nBROWSER PASS: ${VIEWPORTS.length}/${VIEWPORTS.length} viewports — ห้องตรวจไม่เด้งแท็บ, หน้าร้านพิมพ์ได้จริงและป้ายหาย, ฟอร์มไม่ซ้อน`);
+    }
   } finally {
     await stopChild(server);
     try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch {}

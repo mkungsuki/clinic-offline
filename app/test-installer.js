@@ -8,7 +8,7 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const { execFileSync, spawn } = require('node:child_process');
 const { DatabaseSync } = require('node:sqlite');
-const { buildInstaller, PACKAGE_NAME, TRIAL_PACKAGE_NAME, DOCUMENT_FILES } = require('./tools/build-installer');
+const { buildInstaller, PACKAGE_NAME, TRIAL_PACKAGE_NAME, DOCUMENT_FILES, PAYLOAD_DIRECTORY } = require('./tools/build-installer');
 const { buildHotfix, TRIAL_HOTFIX_PACKAGE_NAME, APPLY_CMD: HOTFIX_APPLY_CMD } = require('./tools/build-hotfix');
 const { sha256 } = require('./lib/recovery-core');
 const { SCHEMA_VERSION } = require('./lib/schema-version');
@@ -57,12 +57,12 @@ function runCmd(cmdFile, args, env) {
   // 1) build ชุดติดตั้งลง temp
   const distDir = path.join(root, 'dist');
   const result = buildInstaller({ out: distDir });
-  const packageRoot = result.packageRoot;
+  const packageRoot = result.payloadRoot;
   test('build สำเร็จ มี ZIP และไฟล์ครบ', () => {
     assert.equal(result.ok, true);
     assert.ok(fs.existsSync(result.zipFile), 'ต้องมีไฟล์ ZIP');
     for (const name of ['ติดตั้งระบบคลินิก.cmd', 'เปิดระบบคลินิก.cmd', 'รีสตาร์ทระบบคลินิก.cmd',
-      'อ่านก่อนติดตั้ง.txt', 'setup-manifest.json', path.join('scripts', 'make-shortcuts.ps1'),
+      'setup-manifest.json', path.join('scripts', 'make-shortcuts.ps1'),
       path.join('runtime', 'node.exe'), path.join('app', 'server.js'), path.join('app', 'seed.js'),
       path.join('app', 'public', 'remed.js')]) {
       assert.ok(fs.existsSync(path.join(packageRoot, name)), `ขาดไฟล์ ${name}`);
@@ -92,7 +92,7 @@ function runCmd(cmdFile, args, env) {
   test('ZIP แตกแล้วชื่อไฟล์ไทยรอด + hash ตรง manifest ทุกไฟล์', () => {
     execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
       `Expand-Archive -LiteralPath '${result.zipFile}' -DestinationPath '${extracted}' -Force`], { timeout: 120000 });
-    const extractedRoot = path.join(extracted, PACKAGE_NAME);
+    const extractedRoot = path.join(extracted, PACKAGE_NAME, PAYLOAD_DIRECTORY);
     assert.ok(fs.existsSync(path.join(extractedRoot, 'ติดตั้งระบบคลินิก.cmd')), 'ชื่อไฟล์ไทยหายหลังแตก ZIP');
     const manifest = JSON.parse(fs.readFileSync(path.join(extractedRoot, 'setup-manifest.json'), 'utf8'));
     assert.ok(manifest.files.length >= 30);
@@ -105,7 +105,7 @@ function runCmd(cmdFile, args, env) {
 
   // 4) รันตัวติดตั้งจริงจากโฟลเดอร์ที่แตก ZIP → โฟลเดอร์ปลายทางสะอาด
   test('ไฟล์ ZIP เสียหลังแตก แม้ขนาดเท่าเดิม ต้องหยุดก่อนสร้างฐานข้อมูล', () => {
-    const sourceRoot = path.join(extracted, PACKAGE_NAME);
+    const sourceRoot = path.join(extracted, PACKAGE_NAME, PAYLOAD_DIRECTORY);
     const file = path.join(sourceRoot, 'app', 'public', 'common.js');
     const before = fs.readFileSync(file), changed = Buffer.from(before); changed[0] ^= 1;
     const failedTarget = path.join(root, 'ตรวจ hash ภาษาไทย');
@@ -118,6 +118,19 @@ function runCmd(cmdFile, args, env) {
     } finally { fs.writeFileSync(file, before); }
   });
 
+  test('ZIP root contains exactly three entries and transport manifest covers nested paths',()=>{
+    const distribution=path.join(extracted,PACKAGE_NAME);
+    assert.deepEqual(fs.readdirSync(distribution).sort(),[PAYLOAD_DIRECTORY,'ติดตั้งระบบคลินิก.cmd','อ่านก่อนติดตั้ง.txt'].sort());
+    assert(!fs.existsSync(path.join(distribution,PAYLOAD_DIRECTORY,'อ่านก่อนติดตั้ง.txt')),'readme must exist only once in the package');
+    const readme=fs.readFileSync(path.join(distribution,'อ่านก่อนติดตั้ง.txt'),'utf8');
+    assert(readme.includes('ไฟล์เดียวที่ต้องกด') && readme.includes('โฟลเดอร์ "ชุดโปรแกรม (ไม่ต้องเปิด)" ไม่ต้องเปิด'));
+    assert(!readme.includes('พร้อมให้คนจริงลอง'),'internal evaluator wording must stay out of user instructions');
+    const {verifySetupPackage}=require('./tools/verify-setup-package');assert.equal(verifySetupPackage(distribution),true);
+    const wrapper=fs.readFileSync(path.join(distribution,'ติดตั้งระบบคลินิก.cmd'),'utf8');assert(!/(?<!\r)\n/.test(wrapper));
+    const file=path.join(distribution,PAYLOAD_DIRECTORY,'scripts','make-shortcuts.ps1'),old=fs.readFileSync(file);
+    const changed=Buffer.from(old);changed[0]^=1;fs.writeFileSync(file,changed);
+    try{const destination=path.join(root,'broken package ภาษาไทย');const run=runCmd(path.join(distribution,'ติดตั้งระบบคลินิก.cmd'),[destination],{CLINIC_INSTALL_TEST:'1'});assert.equal(run.code,1);assert(!fs.existsSync(destination));}finally{fs.writeFileSync(file,old);}
+  });
   const target = path.join(root, 'คลินิก ทดสอบติดตั้ง');
   const installerCmd = path.join(extracted, PACKAGE_NAME, 'ติดตั้งระบบคลินิก.cmd');
   test('ติดตั้งลงโฟลเดอร์สะอาดสำเร็จ (โหมดทดสอบ)', () => {
@@ -131,7 +144,7 @@ function runCmd(cmdFile, args, env) {
       assert(fs.readFileSync(path.join(dir, 'app', 'LICENSE')).equals(license));
     }
     assert.match(run.output, /AGPL-3.0/);
-    const body = fs.readFileSync(installerCmd, 'utf8');
+    const body = fs.readFileSync(path.join(packageRoot,'ติดตั้งระบบคลินิก.cmd'), 'utf8');
     assert(!/(?<!\r)\n/.test(body), 'installer ต้อง CRLF');
     assert(body.indexOf('goto :donetest') < body.indexOf('CLINIC_INSTALL_DONE'), 'headless ต้องข้ามกล่องข้อความ');
     for (const flag of ['/IS', '/IT', '/IM', '/R:2', '/W:2', '/LOG+']) assert(body.includes(flag));
@@ -141,6 +154,27 @@ function runCmd(cmdFile, args, env) {
     assert(fs.existsSync(path.join(target, 'logs/install-copy.log')));
   });
 
+  test('installed inventory keeps old flat paths and every source byte (no envelope directory)',()=>{
+    assert(!fs.existsSync(path.join(target,PAYLOAD_DIRECTORY)));
+    const m=JSON.parse(fs.readFileSync(path.join(packageRoot,'setup-manifest.json'),'utf8'));
+    for(const f of m.packageFiles.filter(f=>f.file.startsWith(PAYLOAD_DIRECTORY+'/'))){const relative=f.file.slice(PAYLOAD_DIRECTORY.length+1);assert.equal(sha256(path.join(target,relative)),f.sha256,relative);}
+    for(const name of ['app','runtime','scripts','update','เอกสาร','LICENSE','setup-manifest.json','เปิดระบบคลินิก.cmd','รีสตาร์ทระบบคลินิก.cmd','ติดตั้งระบบคลินิก.cmd','อ่านก่อนติดตั้ง.txt'])assert(fs.existsSync(path.join(target,name)),name);
+    assert.equal(sha256(path.join(target,'อ่านก่อนติดตั้ง.txt')),sha256(path.join(extracted,PACKAGE_NAME,'อ่านก่อนติดตั้ง.txt')));
+  });
+  test('same-folder install preserves the single distribution readme at its installed path',()=>{
+    const sameDistribution=path.join(root,'ติดตั้ง ที่เดิม');
+    // Node 25.2.1 cpSync on this Windows host returns without creating the
+    // Thai destination. Copy this clean package explicitly; never copy a DB.
+    const copyPackage=(source,destination)=>{fs.mkdirSync(destination,{recursive:true});for(const entry of fs.readdirSync(source,{withFileTypes:true})){const from=path.join(source,entry.name),to=path.join(destination,entry.name);if(entry.isDirectory())copyPackage(from,to);else{assert(entry.isFile());fs.copyFileSync(from,to);}}};
+    copyPackage(path.join(extracted,PACKAGE_NAME),sameDistribution);
+    const sameTarget=path.join(sameDistribution,PAYLOAD_DIRECTORY);
+    assert(fs.existsSync(path.join(sameDistribution,'ติดตั้งระบบคลินิก.cmd')),'copied distribution entry must exist');
+    assert(fs.existsSync(path.join(sameTarget,'ติดตั้งระบบคลินิก.cmd')),'copied payload installer must exist');
+    const run=runCmd(path.join(sameDistribution,'ติดตั้งระบบคลินิก.cmd'),[sameTarget],{CLINIC_INSTALL_TEST:'1'});
+    assert.equal(run.code,0,run.output);
+    assert(fs.existsSync(path.join(sameTarget,'update/installed.marker')));
+    assert.equal(sha256(path.join(sameTarget,'อ่านก่อนติดตั้ง.txt')),sha256(path.join(sameDistribution,'อ่านก่อนติดตั้ง.txt')));
+  });
   // 5) ฐานข้อมูลที่ได้ต้องว่างจริง: admin คนเดียว ไม่มี demo ไม่มีคนไข้/ยา และเข้าโหมดตั้งค่าครั้งแรก
   const dbFile = path.join(target, 'app', 'data', 'clinic.db');
   test('ฐานข้อมูลใหม่สะอาด: admin เดียว, ไม่มี demo, setup_required=1, schema ล่าสุด', () => {
@@ -206,7 +240,12 @@ function runCmd(cmdFile, args, env) {
 
   // 9) build ชุดทดลองแยกจากตัวจริงอย่างชัดเจน
   const trialResult = buildInstaller({ out: distDir, trial: true });
-  const trialPackageRoot = trialResult.packageRoot;
+  const trialPackageRoot = trialResult.payloadRoot;
+  test('prepared verifier checks both nested distributions and every ZIP payload against source',()=>{
+    const result=require('./tools/verify-prepared.cjs').verifyPrepared(distDir);
+    assert.equal(result.packages.length,2);assert.equal(result.zips.length,2);
+    assert(result.packages.every(p=>p.sourceDifferences===0));
+  });
   test('build ชุดทดลองสำเร็จ ชื่อ ZIP/โฟลเดอร์/ทางเข้าแยกจากตัวจริง', () => {
     assert.equal(trialResult.ok, true);
     assert.equal(trialResult.trial, true);
@@ -299,7 +338,7 @@ function runCmd(cmdFile, args, env) {
   test('ZIP ชุดทดลองแตกแล้วชื่อไทยและ hash รอดครบ', () => {
     execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
       `Expand-Archive -LiteralPath '${trialResult.zipFile}' -DestinationPath '${trialExtracted}' -Force`], { timeout: 120000 });
-    const extractedRoot = path.join(trialExtracted, TRIAL_PACKAGE_NAME);
+    const extractedRoot = path.join(trialExtracted, TRIAL_PACKAGE_NAME, PAYLOAD_DIRECTORY);
     assert.ok(fs.existsSync(path.join(extractedRoot, 'ติดตั้งระบบคลินิก.cmd')));
     const manifest = JSON.parse(fs.readFileSync(path.join(extractedRoot, 'setup-manifest.json'), 'utf8'));
     assert.equal(manifest.kind, 'clinic-trial');
@@ -322,7 +361,7 @@ function runCmd(cmdFile, args, env) {
     const setup = runCmd(path.join(trialRoot, 'ตั้งค่าใช้สองเครื่อง (ทดลอง).cmd'), [],
       { CLINIC_INSTALL_TEST: '1', CLINIC_LAN_TEST_OUT: lanOut });
     assert.equal(setup.code, 0, `setup-lan exit ${setup.code}: ${setup.output}`);
-    const shortcut = fs.readFileSync(path.join(lanOut, 'เปิดระบบคลินิก (ห้องหมอ).url'), 'utf8');
+    const shortcut = fs.readFileSync(path.join(lanOut, 'เปิดระบบคลินิก (ห้องหมอ ทดลอง).url'), 'utf8');
     assert.ok(shortcut.includes('URL=https://192.168.50.10:8444/'), 'ทางลัดต้องชี้ https IP ทดสอบพอร์ต 8444');
     assert.ok(fs.existsSync(path.join(lanOut, 'อ่านก่อนเปิด.txt')), 'ต้องมีไฟล์คำอธิบายสำหรับเครื่องหมอ');
     // ใบรับรอง: สร้างจริงบน path ไทย, โฟลเดอร์ส่งออกมีเฉพาะ .cer + ตัวติดตั้งใบรับรอง — ห้ามมี pfx/รหัส
@@ -340,6 +379,7 @@ function runCmd(cmdFile, args, env) {
     // หน้า Admin (การ์ด "เครื่องห้องตรวจ") อ่านสถานะจาก cert/lan-setup.json ที่ตัวช่วยเขียนตอนสำเร็จ — ต้องมีและไม่มีความลับ
     const setupInfo = JSON.parse(fs.readFileSync(path.join(trialRoot, 'cert', 'lan-setup.json'), 'utf8'));
     assert.equal(setupInfo.url, 'https://192.168.50.10:8444/');
+    assert.equal(setupInfo.shortcut_name, 'เปิดระบบคลินิก (ห้องหมอ ทดลอง).url');
     assert.equal(setupInfo.output_dir, lanOut);
     assert.equal(setupInfo.rule_name, 'Clinic Trial - Doctor computer (HTTPS 8444)');
     assert.equal(setupInfo.thumbprint, certInfo.thumbprint);
@@ -357,7 +397,7 @@ function runCmd(cmdFile, args, env) {
   //       แล้ว helper วิ่งจนสุด → private key ผิดที่ + firewall ชี้ node.exe ผิดตัว + ส่งใบรับรองผิดใบไปเครื่องหมอ
   //       ตอนนี้ต้องปฏิเสธทั้งชั้น .cmd และชั้น .ps1 และห้ามแตะอะไรเลย (ไม่สร้าง cert/ ไม่สร้างโฟลเดอร์ส่งออก)
   test('ตัวช่วยสองเครื่องรันจากโฟลเดอร์ที่แตก ZIP (ยังไม่ติดตั้ง) ต้องปฏิเสธและไม่แตะอะไร', () => {
-    const packageDir = path.join(trialExtracted, TRIAL_PACKAGE_NAME);
+    const packageDir = path.join(trialExtracted, TRIAL_PACKAGE_NAME, PAYLOAD_DIRECTORY);
     assert.equal(fs.existsSync(path.join(packageDir, 'update', 'installed.marker')), false, 'โฟลเดอร์ที่แตก ZIP ต้องไม่มี installed.marker');
     const lanOut = path.join(root, 'lan-out-not-installed');
     const viaCmd = runCmd(path.join(packageDir, 'ตั้งค่าใช้สองเครื่อง (ทดลอง).cmd'), [], { CLINIC_INSTALL_TEST: '1', CLINIC_LAN_TEST_OUT: lanOut });
@@ -390,7 +430,7 @@ function runCmd(cmdFile, args, env) {
       assert.ok(installer.includes('การ์ด "เครื่องห้องตรวจ"'), 'ตัวติดตั้งต้องบอกว่าทำทีหลังได้ที่หน้าตั้งค่า');
       const shortcuts = fs.readFileSync(path.join(pkgRoot, 'scripts', 'make-shortcuts.ps1'), 'utf8');
       assert.ok(shortcuts.includes(`'${lanCmd}'`) && shortcuts.includes('ตั้งค่าเครื่องห้องตรวจ'), 'make-shortcuts ต้องสร้างทางลัด Desktop ไปตัวช่วยสองเครื่อง');
-      const readme = fs.readFileSync(path.join(pkgRoot, 'อ่านก่อนติดตั้ง.txt'), 'utf8');
+      const readme = fs.readFileSync(path.join(path.dirname(pkgRoot), 'อ่านก่อนติดตั้ง.txt'), 'utf8');
       assert.ok(readme.includes('การ์ด "เครื่องห้องตรวจ"') && readme.includes('ทำทีหลังได้ทุกเมื่อ'), 'readme ต้องชี้ไปการ์ดในหน้าตั้งค่า');
     }
     // server ในชุดติดตั้งต้องมี lib/lan-status.js และหน้า admin มีการ์ด (ไฟล์ตาม allowlist)
@@ -538,8 +578,8 @@ function runCmd(cmdFile, args, env) {
   test('build ชุดทดลองซ้ำลงปลายทางเดิมได้โดยไม่ชนไฟล์ชื่อไทย', () => {
     const rebuilt = buildInstaller({ out: distDir, trial: true, noZip: true });
     assert.equal(rebuilt.ok, true);
-    assert.ok(fs.existsSync(path.join(rebuilt.packageRoot, 'runtime', 'node.exe')));
-    assert.ok(fs.existsSync(path.join(rebuilt.packageRoot, 'app', 'public', 'remed.js')));
+    assert.ok(fs.existsSync(path.join(rebuilt.payloadRoot, 'runtime', 'node.exe')));
+    assert.ok(fs.existsSync(path.join(rebuilt.payloadRoot, 'app', 'public', 'remed.js')));
   });
 
   // 15) ตัวช่วยสองเครื่องต้องจำกัดวงและสร้างทางลัดได้โดย TestMode ไม่แตะ Firewall จริง
@@ -560,7 +600,7 @@ function runCmd(cmdFile, args, env) {
       '-Target', installedTarget, '-TestMode', '-TestIp', '192.168.50.10', '-OutputDir', doctorFolder], {
       encoding: 'utf8', timeout: 30000,
     });
-    const shortcut = fs.readFileSync(path.join(doctorFolder, 'เปิดระบบคลินิก (ห้องหมอ).url'), 'utf8');
+    const shortcut = fs.readFileSync(path.join(doctorFolder, 'เปิดระบบคลินิก (ห้องหมอ ทดลอง).url'), 'utf8');
     const instructions = fs.readFileSync(path.join(doctorFolder, 'อ่านก่อนเปิด.txt'), 'utf8');
     assert.ok(shortcut.includes('URL=https://192.168.50.10:8444/'));
     assert.ok(instructions.includes('ไม่ต้องติดตั้งโปรแกรม'));
@@ -765,6 +805,9 @@ function runCmd(cmdFile, args, env) {
     assert.ok(run.output.includes('ARG1=' + path.join(echoRoot, 'ปลายทางทดสอบ')), run.output);
   });
 
+  passed += await require('./test-trial-transition')(packageRoot);
+  passed += await require('./test-recovery-launcher')(packageRoot);
+  passed += await require('./test-trial-maintenance')();
   console.log(`\nผ่านทั้งหมด ${passed} ข้อ`);
   fs.rmSync(root, { recursive: true, force: true });
 })().catch((error) => {

@@ -81,6 +81,7 @@ function sanitizeDose(d) {
     qty_source: d.qty_source === 'manual' ? 'manual' : 'calculated',
     instructions_source: d.instructions_source === 'manual' ? 'manual' : 'calculated',
   };
+  if (Object.hasOwn(d, 'additional_instructions')) dose.additional_instructions = String(d.additional_instructions || '').trim().slice(0, 2000);
   const hasStandard = (dose.m + dose.n + dose.e + dose.b) > 0;
   const hasExact = dose.times.length > 0;
   const hasPrn = dose.prn_amount > 0 || dose.prn_indication;
@@ -95,6 +96,7 @@ function doseQty(dose) {
   return dose.days > 0 ? Math.ceil(perDay * dose.days) : 0;
 }
 function doseText(dose, unit) {
+  if (Object.hasOwn(dose, 'additional_instructions')) return require('../public/dose-template').text(dose, unit);
   const u = unit || 'เม็ด';
   if (dose.mode === 'exact_times') {
     let t = dose.times.map(x => `${x.time} ${x.amount} ${u}`).join(' / ');
@@ -230,4 +232,5 @@ function pendingAcks() {
 module.exports = {
   saveDraft, getDraft, commitNoteFromDraft, amendNote, noteVersions,
   saveOrderVersion, latestOrderVersion, ackOrder, pendingAcks, buildLines, validateFrontOrderEdit,
+  sanitizeDose, doseText,
 };

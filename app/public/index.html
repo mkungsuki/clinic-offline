@@ -1,10 +1,11 @@
 <!doctype html>
-<html lang="th">
+<html lang="th" class="role-routing">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>หน้าคลินิก</title>
 <link rel="stylesheet" href="/app.css">
+<link rel="stylesheet" href="/queue-notices.css">
 <style>
   /* เฟส 4 (2026-08-18): คอลัมน์ข้างเป็น fr ให้หดตามจอ คิวกลางกว้างสุดเสมอ — 3 คอลัมน์รอดถึง ~880px (min 220+360+250+ช่องว่าง 48)
      → laptop 1366@125% (1093) และ @150% (911) ยังเห็น 3 คอลัมน์ · ต่ำกว่า 900 (เช่น 1280@150% = 853) ค่อยพับ (เดิม: px ตายตัว 340/1fr/420 + พับที่ 1100 → 1366@125% เห็นคอลัมน์เดียว) */
@@ -37,6 +38,7 @@
 </style>
 </head>
 <body>
+<section id="callNotices" class="front-call-notices" aria-label="หมอเรียกคนไข้"></section>
 <div id="backupBanner"></div>
 <div class="cols">
 
@@ -73,6 +75,7 @@
 </div>
 
 <script src="/common.js"></script>
+<script src="/queue-notices.js"></script>
 <script>
 'use strict';
 let queue = [], selVisitId = null, billVisit = null, billLines = [], billDirty = false;
@@ -124,8 +127,9 @@ function showPatient(hn) {
           <button class="btn sm" onclick="addAllergy('${p.hn}')">+ แพ้ยา</button></div>
         ${p.chronic ? `<div class="muted">โรคประจำตัว: ${esc(p.chronic)}</div>` : ''}
         ${p.emergency_name || p.emergency_phone ? `<div class="muted">🆘 ฉุกเฉิน: ${esc(p.emergency_name || '')} ${p.emergency_phone ? '📞 ' + esc(p.emergency_phone) : ''}</div>` : ''}
+        ${doctorSelect('enqDoctor',null,'มาหาหมอ','ตามนัดวันนี้ / ไม่ระบุ')}
         <label class="f"><span>มาด้วยอาการ / มาทำไม (ส่งถึงหมอ)</span>
-          <input type="text" id="enqCC" placeholder="เช่น ไข้ ไอ 2 วัน / มารับยาเดิม / ขอใบรับรองแพทย์"></label>
+          <input type="text" id="enqCC" data-hn="${esc(p.hn)}" placeholder="เช่น ไข้ ไอ 2 วัน / มารับยาเดิม / ขอใบรับรองแพทย์"></label>
         <button class="btn primary big" onclick="enqueue('${p.hn}')">🎫 เข้าคิววันนี้</button>
         <div class="row">
           <button class="btn" onclick="editPatient('${p.hn}')">✏️ แก้ข้อมูล</button>
@@ -260,6 +264,7 @@ function uploadFile(hn) {
 // op_id คงเดิมข้ามการปิด-เปิดฟอร์มจนกว่าจะสำเร็จหรือถูกกู้ (สร้างใหม่ตอนสำเร็จ/กู้เท่านั้น) — ปิดช่อง "เปิดฟอร์มใหม่ = op ใหม่ทั้งที่ของเดิมค้าง"
 let regOpId = null;
 document.getElementById('btnNewPat').onclick = () => {
+  syncCallNoticeGeometry();
   document.getElementById('regBack').classList.remove('hidden');
   if (!regOpId) regOpId = crypto.randomUUID();
   document.getElementById('regCard').classList.remove('hidden');
@@ -330,14 +335,27 @@ function clearReg() {
   document.getElementById('r_sex').value = ''; document.getElementById('r_prefix').value = '';
   document.getElementById('r_birth_age').textContent = '';
 }
+let pendingEnqueue=null;
 async function enqueue(hn) {
+  if(pendingEnqueue && hn && pendingEnqueue.hn!==hn){toast(pendingEnqueue.sending?'กำลังรับคิวคนไข้รายก่อน กรุณารอผลสักครู่':'ยังรอผลรับคิวคนไข้รายก่อน กรุณากด “ส่งรายการเดิมอีกครั้ง / ตรวจคิว” ที่แถบด้านบนก่อน',true);return;}
+  if(pendingEnqueue?.sending)return;
+  if(!pendingEnqueue){const choice=document.getElementById('enqDoctor');pendingEnqueue={hn,cc:document.getElementById('enqCC')?.value||'',op_id:crypto.randomUUID(),...(choice?.value?{preferred_doctor_id:Number(choice.value)}:{})};}
+  const body={...pendingEnqueue};delete body.sending;pendingEnqueue.sending=true;
+  const ccEl=document.getElementById('enqCC');
+  // Clear only the submitted text for this patient, never another card or newer typing.
+  const clearComplaint=()=>{if(ccEl?.dataset.hn===body.hn && ccEl.value===body.cc)ccEl.value='';};
   try {
-    const ccEl = document.getElementById('enqCC');
-    const v = await api('POST', '/api/visits', { hn, cc: ccEl ? ccEl.value : '' });
-    if (ccEl) ccEl.value = '';
-    toast(`เข้าคิวแล้ว — คิวที่ ${v.queue_no}`);
-    refresh();
-  } catch (e) { toast(e.message, true); }
+    const v=await api('POST','/api/visits',body);
+    clearComplaint();
+    pendingEnqueue=null;toast('เข้าคิวแล้ว — คิวที่ '+v.queue_no);refresh();
+    const status=document.getElementById('enqueueResult');if(status)status.remove();
+  }catch(e){
+    if(e.data?.already_queued){clearComplaint();pendingEnqueue=null;document.getElementById('enqueueResult')?.remove();refresh();toast('รับเข้าคิวแล้ว กรุณาดูคิววันนี้');return;}
+    pendingEnqueue.sending=false;
+    if(e.status&&e.status<500){pendingEnqueue=null;}
+    let status=document.getElementById('enqueueResult');if(!status){status=document.createElement('div');status.id='enqueueResult';status.className='card';document.querySelector('.topbar').after(status);}
+    status.innerHTML='<b>'+esc(e.message)+'</b>'+(pendingEnqueue?' <button class="btn" onclick="enqueue()">ส่งรายการเดิมอีกครั้ง / ตรวจคิว</button>':'');toast(e.message,true);
+  }
 }
 
 // ---------- เอกสารย้อนหลังของคนไข้ (UAT B5/D1) ----------
@@ -436,6 +454,7 @@ function docsBlock(v) {
 }
 
 let _lastQueueHTML = '';
+let _lastPayQueueHTML = '';
 let _doneOpen = false;
 const _calledIds = new Set();
 function queueRow(v, faded = false) {
@@ -459,7 +478,7 @@ function queueRow(v, faded = false) {
       ${pendingDocBadges(v)}
       ${v.state === 'CANCELLED' && v.cancel_reason ? `<div class="sub">🚫 ${esc(v.cancel_reason)}</div>` : ''}</div>
     <div class="sp"></div>
-    <span class="chip st-${v.state}">${stateTH(v.state)}</span>
+    <span class="chip st-${v.state}">${stateTH(v.state)}</span>${v.state==='IN_EXAM'?doctorChip(v,'กำลังตรวจโดย'):''}
     ${actions}
   </div>
   <div class="hidden card" id="vitals-${v.id}"></div>`;
@@ -487,7 +506,7 @@ function renderQueue() {
   if (all === _lastQueueHTML) return; // ไม่ re-render ถ้าข้อมูลไม่เปลี่ยน
   _lastQueueHTML = all;
   host.innerHTML = mainHtml;
-  payHost.innerHTML = payHtml;
+  if(payHtml!==_lastPayQueueHTML){payHost.innerHTML=payHtml;_lastPayQueueHTML=payHtml;}
 }
 async function openVitals(id) {
   const v = queue.find(x => x.id === id);
@@ -545,7 +564,7 @@ function apptBox(a) {
   const weekday = TH_WD[new Date(a.appt_date + 'T00:00:00').getDay()];
   return `<div class="island" style="border:2px solid #2563eb;background:#eff6ff;color:#1e3a8a;border-radius:10px;padding:10px 12px">
     <div class="muted">📅 นัดครั้งหน้า — อ่านแจ้งคนไข้ด้วย</div>
-    <div style="font-size:22px;font-weight:800">วัน${weekday}ที่ ${thDate(a.appt_date)} <span class="muted" style="font-size:14px;font-weight:400">(อีก ${a.days} วัน)</span></div>
+    ${doctorChip(a)?'<div>'+doctorChip(a)+'</div>':''}<div style="font-size:22px;font-weight:800">วัน${weekday}ที่ ${thDate(a.appt_date)} <span class="muted" style="font-size:14px;font-weight:400">(อีก ${a.days} วัน)</span></div>
     ${a.note ? `<div>📝 ${esc(a.note)}</div>` : ''}
     <button class="btn big" style="width:100%;margin-top:8px;background:#2563eb;color:#fff"
       onclick="openPrintWindow('/print/appointment/${a.id}','เปิดใบนัด')">🖨️ พิมพ์ใบนัดให้คนไข้ถือกลับ</button>
@@ -845,8 +864,16 @@ function renderStale(list) {
 // ---------- poll ----------
 const _prevStates = {};
 const _seenPendingDocs = new Set();
+let callNotices, refreshSequence = 0;
+function syncCallNoticeGeometry(){
+  const topbar=document.querySelector('.topbar'),host=document.getElementById('callNotices');
+  document.documentElement.style.setProperty('--call-notice-top',(topbar?.getBoundingClientRect().height||56)+'px');
+  if(host)document.documentElement.style.setProperty('--call-notice-overlay-top',host.getBoundingClientRect().bottom+'px');
+}
 async function refresh() {
+  const sequence = ++refreshSequence;
   const data = await api('GET', '/api/queue');
+  if (sequence !== refreshSequence) return;
   // หมอออกใบรับรองที่ห้องตรวจ → หน้าร้านต้องรู้ทันทีว่ามีกระดาษต้องพิมพ์ (กลไกเดียวกับ "หมอเรียกคิว")
   const fresh = [];
   for (const v of data.queue) {
@@ -861,21 +888,37 @@ async function refresh() {
   // หมอกดเรียกตรวจ → เด้งบอกหน้าร้านให้เรียกคนไข้เข้าห้อง (UAT B6)
   for (const v of data.queue) {
     if (_prevStates[v.id] === 'WAITING' && v.state === 'IN_EXAM') {
-      toast(`🔔 หมอเรียกคิวที่ ${v.queue_no} — ${v.prefix || ''}${v.first_name} เข้าห้องตรวจ`);
       _calledIds.add(v.id);
       setTimeout(() => { _calledIds.delete(v.id); _lastQueueHTML = ''; renderQueue(); }, 15000);
     }
     _prevStates[v.id] = v.state;
   }
+  activeDoctors=data.doctors||activeDoctors;
   queue = data.queue;
+  callNotices?.update(queue);
   renderQueue();
   renderStale(data.stale);
   renderBackupBanner(data.backup);
 }
 initPage('front').then(me => {
   if (!me) return;
+  document.body.classList.add('front-with-calls');
+  const topbar=document.querySelector('.topbar');
+  syncCallNoticeGeometry();if(topbar)new ResizeObserver(syncCallNoticeGeometry).observe(topbar);
+  window.addEventListener('scroll',syncCallNoticeGeometry,{passive:true});
+  window.addEventListener('resize',syncCallNoticeGeometry);
+  document.addEventListener('clinic:modal-opening',syncCallNoticeGeometry);
+  new MutationObserver(syncCallNoticeGeometry).observe(document.body,{childList:true});
+  let noticeStorage;try{noticeStorage=localStorage;}catch{noticeStorage={getItem(){throw Error('unavailable');},setItem(){throw Error('unavailable');}};}
+  callNotices=QueueNotices.mount({host:document.getElementById('callNotices'),storage:noticeStorage,
+    storageKey:'clinic.callAcknowledged.v1.'+me.user_id,esc,multiple:multipleDoctors,onStorageEvent:handler=>window.addEventListener('storage',handler)});
   poll(refresh, 3000);
   // มาจากหน้ารายงานด้วยลิงก์ "แก้บิล" — เปิด flow แก้บิลให้ทันที (UAT รอบ 2)
+  const checkoutId = Number(new URLSearchParams(location.search).get('checkout'));
+  if(Number.isSafeInteger(checkoutId)&&checkoutId>0&&me.can_front_desk){
+    const box=document.createElement('div');box.id='checkoutResult';box.className='card';box.setAttribute('role','status');document.querySelector('.topbar').after(box);
+    const open=async()=>{box.textContent='กำลังเปิดรายการคิวที่จบตรวจ…';try{await selectBill(checkoutId);box.textContent='ตรวจชื่อคนไข้ รายการ และยอดเงินก่อนรับเงิน';const a=document.createElement('a');a.className='btn';a.href='/exam.html';a.textContent='กลับห้องตรวจ / รับคนต่อไป';box.append(a);}catch(e){box.textContent=e.message+' ';const b=document.createElement('button');b.className='btn';b.textContent='ลองเปิดรายการเดิมอีกครั้ง';b.onclick=open;box.append(b);}};open();
+  }
   const reissueNo = new URLSearchParams(location.search).get('reissue');
   if (reissueNo) {
     history.replaceState(null, '', '/');

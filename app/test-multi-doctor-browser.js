@@ -1,0 +1,134 @@
+'use strict';
+// Called from the isolated LAN/fresh-profile browser gate only.
+module.exports=async function({client,page,admin,base,hostBase,viewport,evaluate,waitExpression}){
+ const assert=require('node:assert/strict');
+ const username='browser-b-'+viewport.screenWidth+'-'+viewport.dpr;
+ await admin.send('Page.navigate',{url:hostBase+'/login.html'});
+ await waitExpression(admin,"document.readyState==='complete' && document.querySelector('#go')",'admin login helper');
+ await evaluate(admin,"document.querySelector('#u').value='admin';document.querySelector('#p').value='admin1234';document.querySelector('#go').click();true",true);
+ await waitExpression(admin,"typeof adminReady!=='undefined' && adminReady",'admin helper ready');
+ await page.send('Page.navigate',{url:base+'/login.html'});
+ await waitExpression(page,"document.readyState==='complete' && document.querySelector('#go')",'A login helper');
+ await evaluate(page,"document.querySelector('#u').value='doctor';document.querySelector('#p').value='doctor123';document.querySelector('#go').click();true",true);
+ await waitExpression(page,"typeof ME!=='undefined' && ME?.role==='doctor' && typeof activeDoctors!=='undefined' && activeDoctors.length===1",'single doctor ready');
+ assert.equal(await evaluate(page,"doctorSelect('test',null)+doctorChip({doctor_name:'single'})"),'');
+ const created=await evaluate(admin,`api('POST','/api/users',{username:${JSON.stringify(username)},display_name:'หมอ บี สังเคราะห์',role:'doctor',password:'Synthetic-123',pin:'1234'})`,true);
+ assert(created.ok);
+ const A=await evaluate(page,`ME.user_id`);
+ const fixture=await evaluate(page,`(async()=>{const p=await api('POST','/api/patients',{first_name:'หลายหมอสังเคราะห์',sex:'F',op_id:crypto.randomUUID()});const v=await api('POST','/api/visits',{hn:p.hn,op_id:crypto.randomUUID()});await api('POST','/api/visits/'+v.id+'/call');await api('POST','/api/visits/'+v.id+'/appointment',{days:7,doctor_id:ME.user_id,op_id:crypto.randomUUID()});return v;})()`,true);
+ const context=await client.send('Target.createBrowserContext');
+ try{
+  const target=await client.send('Target.createTarget',{url:'about:blank',browserContextId:context.browserContextId});
+  const attached=await client.send('Target.attachToTarget',{targetId:target.targetId,flatten:true});
+  const b={send:(method,params={})=>client.send(method,params,attached.sessionId)};
+  await b.send('Page.enable');await b.send('Runtime.enable');
+  await b.send('Emulation.setDeviceMetricsOverride',{width:Math.round(viewport.screenWidth/viewport.dpr),height:Math.round(viewport.screenHeight/viewport.dpr),deviceScaleFactor:viewport.dpr,mobile:false});
+  await b.send('Page.navigate',{url:base+'/login.html'});
+  await waitExpression(b,"document.readyState==='complete' && document.querySelector('#go')",'doctor B login');
+ await evaluate(b,`document.querySelector('#u').value=${JSON.stringify(username)};document.querySelector('#p').value='Synthetic-123';document.querySelector('#go').click();true`,true);
+  await waitExpression(b,"typeof ME!=='undefined' && ME?.role==='doctor' && typeof lastQueueData!=='undefined' && lastQueueData.length>0",'doctor B queue');
+  const nameA=await evaluate(page,'ME.display_name');
+  assert(await evaluate(b,`(()=>{const row=[...document.querySelectorAll('#examQueue .bigq')].find(r=>r.querySelector('.qno')?.textContent===${JSON.stringify(String(fixture.queue_no))});return row && row.innerText.includes(${JSON.stringify(nameA)}) && !row.querySelector('button');})()`));
+  // Both sessions remain distinct even though the LAN origin is identical.
+  assert.notEqual(await evaluate(b,'ME.user_id'),A);
+  await require('./test-queue-notices-browser')({client,page,b,context,base,hostBase,viewport,A,B:await evaluate(b,'ME.user_id'),evaluate,waitExpression});
+  const bVisit=await evaluate(b,`(async()=>{const p=await api('POST','/api/patients',{first_name:'หมอแทนสังเคราะห์',sex:'F',op_id:crypto.randomUUID()});const v=await api('POST','/api/visits',{hn:p.hn,preferred_doctor_id:${A},op_id:crypto.randomUUID()});return v;})()`,true);
+  await evaluate(b,"refresh()",true);
+  await waitExpression(b,`[...document.querySelectorAll('#examQueue .bigq')].some(r=>r.querySelector('.qno')?.textContent==='${bVisit.queue_no}' && r.classList.contains('preferred-other') && r.innerText.includes(${JSON.stringify(nameA)}))`,'preferred shared queue');
+  await evaluate(b,`[...document.querySelectorAll('#examQueue .bigq')].find(r=>r.querySelector('.qno')?.textContent==='${bVisit.queue_no}').querySelector('button').click();true`,true);
+  await waitExpression(b,`typeof cur!=='undefined' && cur?.id===${bVisit.id} && !!document.querySelector('#apptDoctor')`,'B called preferred A');
+  assert.equal(await evaluate(b,'Number(document.querySelector("#apptDoctor").value)'),await evaluate(b,'ME.user_id'));
+  await evaluate(b,`document.querySelector('#apptDoctor').value='${A}';document.querySelector('#apptQ7').click();true`,true);
+  await waitExpression(b,`cur.appointment?.doctor_id===${A} && document.querySelector('#apptBody').innerText.includes(${JSON.stringify(nameA)}) && document.querySelector('#apptWriteResult').innerText.includes('นัดแล้ว')`,'appointment with A visible');
+  const apptId=await evaluate(b,'cur.appointment.id');
+  await evaluate(b,"[...document.querySelectorAll('#apptBody button')].find(b=>b.textContent==='เปลี่ยนนัด').click();true",true);
+  assert.equal(await evaluate(b,'Number(document.querySelector("#apptDoctor").value)'),A);
+ let prompt='';
+  // Register the dialog handler before the click; no popup/HTTP-only success claims.
+ const handler=async event=>{const raw=event.data instanceof ArrayBuffer?Buffer.from(event.data).toString():String(event.data);const message=JSON.parse(raw);if(message.method==='Page.javascriptDialogOpening'&&message.sessionId===attached.sessionId){prompt=message.params.message;await b.send('Page.handleJavaScriptDialog',{accept:true});}};
+ client.socket.addEventListener('message',handler);
+ await evaluate(b,"document.querySelector('#apptQ14').click();true",true);
+  await waitExpression(b,`cur.appointment?.id!==${apptId} && cur.appointment?.doctor_id===${A} && document.querySelector('#apptWriteResult').innerText.includes('นัดแล้ว')`,'replacement visible');
+ client.socket.removeEventListener('message',handler);assert(prompt.includes(nameA));
+  const previousAppointmentId=await evaluate(b,'cur.appointment.id');
+  const secondVisit=await evaluate(b,"(async()=>{const p=await api('POST','/api/patients',{first_name:'นัดค้างข้ามคนสังเคราะห์',sex:'F',op_id:crypto.randomUUID()});const v=await api('POST','/api/visits',{hn:p.hn,op_id:crypto.randomUUID()});await api('POST','/api/visits/'+v.id+'/call');await openVisit(v.id);return v;})()",true);
+  await waitExpression(b,"document.querySelector('#apptQ7')",'new patient appointment form');
+  await evaluate(b,`window.__apptOriginalFetch=window.fetch;window.fetch=async(url,opts)=>{const r=await __apptOriginalFetch(url,opts);if(url==='/api/visits/${secondVisit.id}/appointment'&&opts?.method==='POST'){await r.clone().text();throw Error('synthetic appointment reply lost');}return r;};document.querySelector('#apptQ7').click();true`,true);
+  await waitExpression(b,"pendingExamAppointment && !pendingExamAppointment.sending && document.querySelector('#apptWriteResult button')",'appointment lost reply remains retryable');
+  await evaluate(b,`window.fetch=window.__apptOriginalFetch;openVisit(${bVisit.id});true`,true);
+  await waitExpression(b,`cur?.id===${bVisit.id} && [...document.querySelectorAll('#apptBody button')].some(b=>b.textContent==='เปลี่ยนนัด')`,'other patient reopened during pending appointment');
+  await evaluate(b,"[...document.querySelectorAll('#apptBody button')].find(b=>b.textContent==='เปลี่ยนนัด').click();document.querySelector('#apptQ7').click();true",true);
+  await waitExpression(b,"document.querySelector('#apptWriteResult')?.innerText.includes('รายก่อน')",'appointment context mismatch shown to doctor');
+  assert.equal(await evaluate(b,'pendingExamAppointment.visitId'),secondVisit.id);
+  await evaluate(b,"document.querySelector('#apptWriteResult button').click();true",true);
+  await waitExpression(b,"pendingExamAppointment===null",'explicit previous appointment retry finished');
+  assert.equal(await evaluate(b,'cur.id'),bVisit.id);
+  assert.equal(await evaluate(b,`(async()=> (await api('GET','/api/appointments/${previousAppointmentId}/history')).appointment.cancelled)()`,true),0);
+  // The core brief: A's appointment was issued during a different visit.
+  const prior=await evaluate(page,"(async()=>{const p=await api('POST','/api/patients',{first_name:'นัดจากครั้งก่อนสังเคราะห์',sex:'F',op_id:crypto.randomUUID()});const v=await api('POST','/api/visits',{hn:p.hn,op_id:crypto.randomUUID()});await api('POST','/api/visits/'+v.id+'/call');const a=await api('POST','/api/visits/'+v.id+'/appointment',{days:7,op_id:crypto.randomUUID()});await api('POST','/api/visits/'+v.id+'/cancel',{reason:'ปิด visit สังเคราะห์เพื่อทดสอบครั้งถัดไป'});return {hn:p.hn,id:a.id,visitId:v.id};})()",true);
+  const nextVisit=await evaluate(b,`(async()=>{const v=await api('POST','/api/visits',{hn:${JSON.stringify(prior.hn)},op_id:crypto.randomUUID()});await api('POST','/api/visits/'+v.id+'/call');await openVisit(v.id);return v;})()`,true);
+  assert.notEqual(nextVisit.id,prior.visitId);
+  await waitExpression(b,`cur?.appointment?.id===${prior.id}`,'A appointment from previous visit loaded for B');
+  await evaluate(b,"[...document.querySelectorAll('#apptBody button')].find(b=>b.textContent==='เปลี่ยนนัด').click();true",true);
+  assert.equal(await evaluate(b,'Number(document.querySelector("#apptDoctor").value)'),A,'previous visit must default back to A without manually changing dropdown');
+  prompt='';client.socket.addEventListener('message',handler);
+  await evaluate(b,"document.querySelector('#apptQ14').click();true",true);
+  await waitExpression(b,`cur?.appointment?.id!==${prior.id} && cur?.appointment?.doctor_id===${A}`,'A retained after replacing appointment from previous visit');
+  client.socket.removeEventListener('message',handler);assert(prompt.includes(nameA));
+  const nextAppointmentId=await evaluate(b,'cur.appointment.id');
+  await b.send('Page.navigate',{url:base+'/print/appointment/'+nextAppointmentId});
+  await waitExpression(b,`document.readyState==='complete' && [...document.querySelectorAll('.formline')].some(el=>el.offsetHeight>0&&el.textContent.includes('นัดกับ')&&el.textContent.includes(${JSON.stringify(nameA)}))`,'multi-doctor printed appointment visibly names A');
+  // A 14-day appointment crosses a month boundary after mid-month. Open its
+  // actual calendar month instead of assuming today's month contains the row.
+  await b.send('Page.navigate',{url:base+'/calendar.html'});
+  await waitExpression(b,"typeof calYear==='number' && typeof calMonth==='number' && !!document.querySelector('#calGrid .cal-cell')",'B calendar ready');
+  const calendarDate=await evaluate(b,`(async()=> (await api('GET','/api/appointments/${previousAppointmentId}/history')).appointment.appt_date)()`,true);
+  const monthDelta=await evaluate(b,`(() => {const [y,m]=${JSON.stringify(calendarDate)}.split('-').map(Number);return (y-calYear)*12+(m-1-calMonth);})()`);
+  for(let step=0;step<Math.abs(monthDelta);step++)await evaluate(b,`document.querySelector('[onclick="moveMonth(${Math.sign(monthDelta)})"]').click();true`,true);
+  await waitExpression(b,`appts.some(a=>a.id===${previousAppointmentId})`,'B calendar contains actual appointment month');
+  await evaluate(b,`renderDay(appts.find(a=>a.visit_id===${bVisit.id}).appt_date);true`,true);
+  assert(await evaluate(b,`document.querySelector('#dayList').innerText.includes(${JSON.stringify(nameA)})`));
+  await b.send('Page.navigate',{url:base+'/index.html'});
+  await waitExpression(b,"typeof ME!=='undefined' && ME && typeof showPatient==='function'",'queue reception');
+  const hn=await evaluate(b,"(async()=>{const p=await api('POST','/api/patients',{first_name:'คิวตอบกลับหายสังเคราะห์',sex:'F',op_id:crypto.randomUUID()});await showPatient(p.hn);return p.hn;})()",true);
+  await waitExpression(b,"document.querySelector('#enqDoctor')",'optional preferred doctor');
+  await evaluate(b,`window.__originalFetch=window.fetch;window.fetch=async(url,opts)=>{const response=await __originalFetch(url,opts);if(url==='/api/visits'&&opts?.method==='POST'){await response.clone().text();throw Error('synthetic reply lost');}return response;};document.querySelector('#enqCC').value='อาการเดิมสังเคราะห์';document.querySelector('#enqDoctor').value='${A}';[...document.querySelectorAll('button')].find(b=>b.textContent.includes('เข้าคิววันนี้')).click();true`,true);
+  await waitExpression(b,"document.querySelector('#enqueueResult button') && pendingEnqueue && !pendingEnqueue.sending",'lost queue reply visible retry');
+  const otherHn=await evaluate(b,"(async()=>{window.fetch=window.__originalFetch;const p=await api('POST','/api/patients',{first_name:'คนไข้รายถัดไปสังเคราะห์',sex:'F',op_id:crypto.randomUUID()});showPatient(p.hn);return p.hn;})()",true);
+  await waitExpression(b,`document.querySelector('#patCard h2')?.innerText.includes(${JSON.stringify(otherHn)})`,'next patient displayed while prior queue pending');
+  await evaluate(b,"document.querySelector('#enqCC').value='อาการของรายใหม่';true",true);
+  await evaluate(b,"[...document.querySelectorAll('#patCard button')].find(b=>b.textContent.includes('เข้าคิววันนี้')).click();true",true);
+  await waitExpression(b,"document.querySelector('#toast')?.innerText.includes('รายก่อน')",'new patient queue button explains unresolved previous patient');
+  assert.equal(await evaluate(b,'pendingEnqueue?.hn'),hn);
+  assert(await evaluate(b,"!!document.querySelector('#enqueueResult button')"));
+  await evaluate(b,"window.fetch=window.__originalFetch;document.querySelector('#enqueueResult button').click();true",true);
+  await waitExpression(b,`pendingEnqueue===null && queue.some(v=>v.hn===${JSON.stringify(hn)}&&v.preferred_doctor_id===${A})`,'queue retry visible');
+  assert.equal(await evaluate(b,`queue.filter(v=>v.hn===${JSON.stringify(hn)}).length`),1);
+  assert.equal(await evaluate(b,`queue.filter(v=>v.hn===${JSON.stringify(otherHn)}).length`),0);
+  assert.equal(await evaluate(b,"document.querySelector('#enqCC').value"),'อาการของรายใหม่');
+  await evaluate(b,"[...document.querySelectorAll('#patCard button')].find(b=>b.textContent.includes('เข้าคิววันนี้')).click();true",true);
+  await waitExpression(b,`pendingEnqueue===null && queue.some(v=>v.hn===${JSON.stringify(otherHn)}) && document.querySelector('#enqCC').value===''`,'confirmed queue visibly clears submitted complaint');
+  await evaluate(b,`showPatient(${JSON.stringify(hn)});true`,true);
+  await waitExpression(b,`document.querySelector('#patCard h2')?.innerText.includes(${JSON.stringify(hn)})`,'already queued patient reopened');
+  await evaluate(b,"window.fetch=async(url,opts)=>{const r=await __originalFetch(url,opts);if(url==='/api/visits'&&opts?.method==='POST'){await r.clone().text();throw Error('synthetic conflict reply lost');}return r;};[...document.querySelectorAll('#patCard button')].find(b=>b.textContent.includes('เข้าคิววันนี้')).click();true",true);
+  await waitExpression(b,"document.querySelector('#enqueueResult button') && pendingEnqueue && !pendingEnqueue.sending",'lost already-queued response remains recoverable');
+  await evaluate(b,"window.fetch=window.__originalFetch;document.querySelector('#enqueueResult button').click();true",true);
+  // A new op for an already-open visit is a normal 400, not the 409 op-id
+  // payload-conflict envelope. Keep that explanation, remove its retry action.
+  await waitExpression(b,"pendingEnqueue===null && !document.querySelector('#enqueueResult button') && document.querySelector('#enqueueResult')?.innerText.includes('คิวค้าง')",'already-open queue explains rejection and removes stale retry action');
+  assert.equal(await evaluate(b,`queue.filter(v=>v.hn===${JSON.stringify(hn)}).length`),1);
+  const B=await evaluate(b,'ME.user_id');
+  await evaluate(admin,`api('PATCH','/api/users/${B}',{active:0})`,true);
+  await page.send('Page.navigate',{url:base+'/exam.html'});
+  await waitExpression(page,"typeof ME!=='undefined' && ME && activeDoctors.length===1 && typeof renderAppt==='function'",'single doctor restored');
+  assert.equal(await evaluate(page,"doctorSelect('test',null)+doctorChip({doctor_name:'single'})"),'');
+  assert.equal(await evaluate(page,"document.querySelectorAll('[data-queue-group]').length"),0);
+  const singleAppointmentId=await evaluate(page,`(async()=> (await api('GET','/api/visits/${fixture.id}')).appointment.id)()`,true);
+  await page.send('Page.navigate',{url:base+'/print/appointment/'+singleAppointmentId});
+  await waitExpression(page,`document.readyState==='complete' && [...document.querySelectorAll('.formline')].some(el=>el.offsetHeight>0&&el.textContent.includes('แพทย์ผู้ตรวจ')&&el.textContent.includes(${JSON.stringify(nameA)}))`,'single-doctor printed appointment retains the original examiner line');
+  if(viewport.screenWidth===1920){const fs=require('node:fs'),path=require('node:path'),out=path.resolve(__dirname,'../output/107-review-evidence');fs.mkdirSync(out,{recursive:true});await page.send('Page.bringToFront');const shot=await page.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});fs.writeFileSync(path.join(out,'single-doctor-appointment.png'),Buffer.from(shot.data,'base64'));}
+  await page.send('Page.navigate',{url:base+'/exam.html'});
+  await waitExpression(page,"typeof ME!=='undefined' && ME && activeDoctors.length===1 && typeof renderAppt==='function'",'single doctor exam restored after print check');
+  console.log('PASS multi doctor browser: single controls hidden, original examiner slip visible; separate profiles on LAN; prior-visit doctor default/replacement/print, queue complaint clearing and pending-context guards');
+ }finally{await client.send('Target.disposeBrowserContext',{browserContextId:context.browserContextId});}
+};

@@ -1,4 +1,6 @@
 'use strict';
+// Must run before loading db.js: a half-finished reset must never seed an empty DB.
+if(require('./lib/trial-start-guard')(__dirname))process.exit(12);
 // ระบบบริหารคลินิก offline — zero dependency: node:http + node:sqlite
 // เครื่องหน้าคลินิกเป็น host, เครื่องห้องตรวจเปิด browser มาที่ http://<ip>:8080
 const http = require('node:http');
@@ -11,6 +13,7 @@ const crypto = require('node:crypto');
 const applog = require('./lib/applog');
 applog.install(applog.makeLogger('server'));
 
+require('./lib/recovery-core').recoverInterruptedPublications(process.env.CLINIC_DATA_DIR || path.join(__dirname, 'data'));
 const { db, now, txn, getSetting, setSetting, DATA_DIR, ATTACH_DIR, ASSET_DIR } = require('./lib/db');
 const clientOps = require('./lib/client-ops');
 clientOps.prune(); // registry กัน retry เก็บ 7 วันพอ — เก็บกวาดตอนบูต
@@ -25,12 +28,15 @@ const recoveryService = require('./lib/recovery-service');
 const reports = require('./lib/reports');
 const print = require('./lib/print');
 const appts = require('./lib/appointments');
+const doctors = require('./lib/doctors');
 const printEvents = require('./lib/print-events');
 const { UpdateService, entitlementAllowsUpdate } = require('./lib/update-service');
 const security = require('./lib/security');
 const lanStatus = require('./lib/lan-status');
 
 const PORT = Number(process.env.CLINIC_PORT || getSetting('port', '8080'));
+// Browsers share cookies across ports. Keep trial and live logins separate on one host/profile.
+const SESSION_COOKIE = getSetting('demo_mode', '0') === '1' ? 'csid_trial' : 'csid_live';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 // สร้าง token ใหม่ทุกครั้งที่เปิดเซิร์ฟเวอร์ — token เก่าที่อาจหลุดจะใช้สั่งหยุดระบบไม่ได้อีก
 // เขียนลงดิสก์เฉพาะหลัง bind พอร์ตสำเร็จ (ดูใน server.listen) — กัน process ที่เปิดซ้ำแล้ว
@@ -146,7 +152,7 @@ function parseCookies(req) {
 // role guard แบบ least privilege: ไม่ให้ admin กลายเป็นแพทย์/หน้าคลินิกโดยปริยาย
 // เรียกโดยไม่ระบุ role = admin-only
 function requireRole(ctx, ...roles) {
-  if ((roles.length === 0 && ctx.session.role === 'admin') || roles.includes(ctx.session.role)) return;
+  if ((roles.length === 0 && ctx.session.role === 'admin') || roles.includes(ctx.session.role) || (roles.includes('front') && ctx.session.canFrontDesk === true)) return;
   throw Object.assign(new Error('สิทธิ์ไม่พอสำหรับการทำรายการนี้'), { status: 403 });
 }
 
@@ -172,7 +178,7 @@ if (TEST_INSTANCE_TOKEN) route('GET', '/api/test-instance', ctx => {
 // cookie ติด Secure เมื่อวิ่งบน HTTPS (LAN) — บน HTTP loopback ไม่ติด ไม่งั้น localhost ใช้ไม่ได้
 function sessionCookie(req, value, maxAge) {
   const secure = req.socket.encrypted ? '; Secure' : '';
-  return maxAge === 0 ? `csid=; Max-Age=0; Path=/${secure}` : `csid=${value}; HttpOnly; SameSite=Lax; Path=/${secure}`;
+  return maxAge === 0 ? `${SESSION_COOKIE}=; Max-Age=0; Path=/${secure}` : `${SESSION_COOKIE}=${value}; HttpOnly; SameSite=Lax; Path=/${secure}`;
 }
 
 route('POST', '/api/login', async ctx => {
@@ -254,6 +260,27 @@ route('GET', '/api/admin/access-log', ctx => {
 // ==================== เครื่องห้องตรวจ (คอมเครื่องที่สอง) — การ์ดใน Admin ====================
 // สถานะอ่านได้ทุกที่ที่เป็น admin; การกระทำ (เรียกตัวช่วย/เปิดโฟลเดอร์) ทำได้เฉพาะ admin บนเครื่องหน้าร้าน (loopback)
 // เพราะตัวช่วยเปิดหน้าต่าง/UAC/กล่องบนจอเครื่องที่ server รันอยู่ และจะรีสตาร์ท server เอง
+route('GET', '/api/admin/runtime-status', ctx => {
+  requireRole(ctx, 'admin');
+  send(ctx.res, 200, { ...require('./scripts/runtime-maintenance').status(path.join(__dirname, '..')), host: isLoopbackAddress(ctx.req.socket.remoteAddress) });
+});
+route('GET', '/api/admin/trial-tools', ctx => {
+  requireRole(ctx, 'admin');
+  send(ctx.res,200,{...require('./lib/trial-maintenance').status(path.join(__dirname,'..')),host:isLoopbackAddress(ctx.req.socket.remoteAddress)});
+});
+route('POST', '/api/admin/trial-tools', async ctx => {
+  requireRole(ctx,'admin');
+  if(!isLoopbackAddress(ctx.req.socket.remoteAddress))throw Object.assign(new Error('ให้ผู้ดูแลกดจากชุดทดลองบนเครื่องหลักเท่านั้น'),{status:403});
+  const body=ctx.body;
+  const launched=await require('./lib/trial-maintenance').launch(path.join(__dirname,'..'),body.action,body.op_id);
+  if(TEST_INSTANCE_TOKEN && ctx.req.headers['x-clinic-test-token']===TEST_INSTANCE_TOKEN && ctx.req.headers['x-clinic-test-crash']==='after-trial-dispatch')process.exit(88);
+  send(ctx.res,202,launched);
+});
+route('POST', '/api/admin/runtime-update', ctx => {
+  requireRole(ctx, 'admin');
+  if (!isLoopbackAddress(ctx.req.socket.remoteAddress)) throw Object.assign(new Error('อัปเดตส่วนประกอบได้จากเครื่องหน้าร้านเท่านั้น'), {status:403});
+  send(ctx.res, 202, require('./scripts/runtime-maintenance').launch(path.join(__dirname, '..'), PORT));
+});
 route('GET', '/api/admin/lan-status', async ctx => {
   requireRole(ctx, 'admin');
   const status = await lanStatus.collect({
@@ -287,6 +314,7 @@ route('GET', '/api/me', ctx => {
   if (!ctx.session) return send(ctx.res, 401, { error: 'ยังไม่ได้ login' });
   send(ctx.res, 200, {
     user_id: ctx.session.userId, role: ctx.session.role, display_name: ctx.session.displayName,
+    can_front_desk: ctx.session.canFrontDesk === true,
     locked: ctx.session.locked, clock_error: clockError,
     app_version: require('./package.json').version,
     setup_required: getSetting('setup_required', '1') === '1',
@@ -451,11 +479,13 @@ route('POST', '/api/patients/:hn/mark-duplicate', ctx => {
 
 // ==================== queue & visits ====================
 // payload เดียวสำหรับ poll 3 วิ ของทั้งสองจอ
+route('GET', '/api/doctors', ctx => send(ctx.res, 200, doctors.active()));
 route('GET', '/api/queue', ctx => {
   send(ctx.res, 200, {
     // pending_docs = ใบรับรองที่หมอออกไว้แต่หน้าร้านยังไม่ได้พิมพ์ (เครื่องพิมพ์อยู่ที่หน้าร้านเครื่องเดียว)
     queue: printEvents.attachPendingDocs(visits.todayQueue()),
     stale: visits.stale(),
+    doctors: doctors.active(),
     backup: backup.status(),
     pending_acks: notes.pendingAcks().length,
     low_stock: stock.lowStock().length,
@@ -464,7 +494,9 @@ route('GET', '/api/queue', ctx => {
 });
 route('POST', '/api/visits', ctx => {
   requireRole(ctx, 'front', 'doctor');
-  send(ctx.res, 201, visits.create(ctx.body.hn, ctx.session.userId, ctx.body.vitals || {}, ctx.body.cc));
+  exactlyOnce(ctx, 'enqueue', {status:201,scope:ctx.session.userId+':'+ctx.body.hn,
+    conflictField:'already_queued',conflictMessage:()=> 'รับเข้าคิวแล้ว กรุณาดูคิววันนี้ก่อนรับซ้ำ'},
+    () => visits.create(ctx.body.hn, ctx.session.userId, ctx.body.vitals || {}, ctx.body.cc, ctx.body.preferred_doctor_id));
 });
 route('GET', '/api/visits/:id', ctx => {
   const v = visits.get(Number(ctx.params.id));
@@ -490,15 +522,20 @@ route('GET', '/api/visits/:id', ctx => {
 });
 route('POST', '/api/visits/:id/call', ctx => {
   requireRole(ctx, 'doctor');
-  send(ctx.res, 200, visits.transition(Number(ctx.params.id), 'call', ctx.session.userId));
+  exactlyOnce(ctx,'call',{status:200,scope:ctx.session.userId+':'+ctx.params.id,
+    conflictField:'previous_call',conflictMessage:()=> 'รายการเรียกนี้ถูกใช้แล้ว กรุณาดูคิวล่าสุดก่อนเลือกคนไข้'},
+    ()=>visits.transition(Number(ctx.params.id),'call',ctx.session.userId));
 });
 route('POST', '/api/visits/:id/requeue', ctx => {
   requireVisitDoctor(ctx, ctx.params.id);
-  send(ctx.res, 200, visits.transition(Number(ctx.params.id), 'requeue', ctx.session.userId));
+  exactlyOnce(ctx,'requeue',{status:200,scope:ctx.session.userId+':'+ctx.params.id,
+    conflictField:'previous_requeue',conflictMessage:()=> 'รายการคืนคิวนี้ถูกใช้แล้ว กรุณาดูคิวล่าสุด'},
+    ()=>visits.transition(Number(ctx.params.id),'requeue',ctx.session.userId));
 });
 route('POST', '/api/visits/:id/finish-exam', ctx => {
   requireVisitDoctor(ctx, ctx.params.id);
-  send(ctx.res, 200, visits.finishExam(Number(ctx.params.id), {
+  exactlyOnce(ctx, 'finish-exam', { status: 200, scope: ctx.params.id, conflictField: 'already_finished',
+    conflictMessage: () => 'คิวนี้จบตรวจแล้ว เปิดหน้าคลินิกเพื่อตรวจรายการเดิมก่อนทำต่อ' }, () => visits.finishExam(Number(ctx.params.id), {
     note: ctx.body.note,
     lines: ctx.body.lines,
     baseVersionId: ctx.body.base_version_id,
@@ -625,8 +662,14 @@ route('POST', '/api/medcerts/:no/void', ctx => {
 // ==================== stock & master data ====================
 route('GET', '/api/items/search', ctx => send(ctx.res, 200, stock.searchItems(ctx.query.q)));
 route('GET', '/api/drugs', ctx => send(ctx.res, 200, stock.listDrugs(ctx.query.all === '1')));
-route('POST', '/api/drugs', ctx => { requireRole(ctx, 'front'); send(ctx.res, 201, { id: stock.upsertDrug(ctx.body) }); });
-route('PATCH', '/api/drugs/:id', ctx => { requireRole(ctx, 'front'); stock.upsertDrug(ctx.body, Number(ctx.params.id)); send(ctx.res, 200, { ok: true }); });
+function saveDrugMaster(ctx, id = null) {
+  requireRole(ctx, 'front');
+  exactlyOnce(ctx, 'drug-save', { status: id == null ? 201 : 200, scope: id ?? 'new',
+    conflictField: 'saved_drug', conflictMessage: () => 'รายการยาก่อนหน้าบันทึกแล้ว กรุณาตรวจในคลังก่อนแก้ไขต่อ' },
+    () => ({ id: stock.upsertDrug(ctx.body, id), ok: true }));
+}
+route('POST', '/api/drugs', ctx => saveDrugMaster(ctx));
+route('PATCH', '/api/drugs/:id', ctx => saveDrugMaster(ctx, Number(ctx.params.id)));
 // รับยาเข้า: รับซ้ำสองรอบเป็นเรื่องปกติของชีวิตจริง — server แยก "กดซ้ำ" ออกเองไม่ได้ ต้องพึ่ง op_id
 // (failure-injection 2026-08-25: retry หลัง crash = รับเบิ้ล; และเดิม move/setCost คนละ txn — ตอนนี้อะตอมมิก)
 route('POST', '/api/drugs/:id/receive', ctx => {
@@ -699,8 +742,14 @@ route('GET', '/api/drugs/:id/movements', ctx => send(ctx.res, 200, stock.movemen
 route('GET', '/api/stock/reconcile', ctx => send(ctx.res, 200, stock.reconcile()));
 route('GET', '/api/stock/low', ctx => send(ctx.res, 200, stock.lowStock()));
 route('GET', '/api/services', ctx => send(ctx.res, 200, stock.listServices(ctx.query.all === '1')));
-route('POST', '/api/services', ctx => { requireRole(ctx, 'front'); send(ctx.res, 201, { id: stock.upsertService(ctx.body) }); });
-route('PATCH', '/api/services/:id', ctx => { requireRole(ctx, 'front'); stock.upsertService(ctx.body, Number(ctx.params.id)); send(ctx.res, 200, { ok: true }); });
+function saveService(ctx, id = null) {
+  requireRole(ctx, 'front');
+  exactlyOnce(ctx, 'service-save', { status: id == null ? 201 : 200, scope: id ?? 'new',
+    conflictField: 'saved_service', conflictMessage: () => 'รายการก่อนหน้าบันทึกแล้ว กรุณาตรวจรายการในตารางก่อนแก้ไขต่อ' },
+    () => ({ id: stock.upsertService(ctx.body, id), ok: true }));
+}
+route('POST', '/api/services', ctx => saveService(ctx));
+route('PATCH', '/api/services/:id', ctx => saveService(ctx, Number(ctx.params.id)));
 
 // import ยาจาก CSV: name,unit,price,qty,reorder_level (seed ข้อมูลวันแรก brief §7.4)
 route('POST', '/api/drugs/import-csv', ctx => {
@@ -750,17 +799,46 @@ route('PATCH', '/api/favsets/:id', ctx => {
 // ==================== appointments (นัด) ====================
 route('POST', '/api/visits/:id/appointment', ctx => {
   requireRole(ctx, 'doctor', 'front');
-  send(ctx.res, 201, appts.create(Number(ctx.params.id), ctx.body, ctx.session.userId));
+  appointmentWrite(ctx, 'create', () => appts.create(Number(ctx.params.id), ctx.body, ctx.session.userId), 201);
 });
+function appointmentWrite(ctx, kind, work, status = 200, required = false) {
+  requireRole(ctx, 'doctor', 'front');
+  if (required && (!clientOps.normalizeOpId(ctx.body.op_id) || !Number.isInteger(ctx.body.expected_event_id) || !appts.validDate(ctx.body.expected_date)))
+    throw Object.assign(new Error('กรุณาเปิดรายการนัดใหม่ก่อนบันทึก'), { status: 400 });
+  const opId = clientOps.normalizeOpId(ctx.body.op_id);
+  const previous = opId && db.prepare('SELECT kind,result_json FROM client_ops WHERE op_id=?').get(opId);
+  if (previous && (previous.kind !== 'appointment-' + kind || JSON.parse(previous.result_json).actor_id !== ctx.session.userId))
+    throw Object.assign(new Error('รายการบันทึกนี้ใช้ไปแล้ว กรุณาเปิดประวัตินัดล่าสุด'), { status: 409 });
+  exactlyOnce(ctx, 'appointment-' + kind, { status, scope: ctx.session.userId + ':' + ctx.params.id,
+    conflictField: 'already_saved', conflictMessage: () => 'บันทึกครั้งนี้สำเร็จไปแล้ว กรุณาเปิดประวัตินัดเพื่อดูผลก่อนทำรายการต่อ'
+  }, () => ({ ...work(), actor_id: ctx.session.userId }));
+}
+route('GET', '/api/appointment-operations/:id', ctx => {
+  requireRole(ctx, 'doctor', 'front');
+  const opId = clientOps.normalizeOpId(ctx.params.id);
+  const row = opId && db.prepare("SELECT result_json FROM client_ops WHERE op_id=? AND kind LIKE 'appointment-%'").get(opId);
+  const result = row && JSON.parse(row.result_json);
+  send(ctx.res, 200, result && result.actor_id === ctx.session.userId ? { known: true, result } : { known: false });
+});
+route('GET', '/api/appointments/followup', ctx => {
+  security.recordAccess('view_appointment_followup', { session: ctx.session, remoteAddress: ctx.req.socket.remoteAddress });
+  send(ctx.res, 200, appts.followup(ctx.query.days || 30));
+});
+route('GET', '/api/appointments/:id/history', ctx => {
+  security.recordAccess('view_appointment_history', { session: ctx.session, remoteAddress: ctx.req.socket.remoteAddress, ref: String(ctx.params.id) });
+  send(ctx.res, 200, appts.history(Number(ctx.params.id)));
+});
+route('POST', '/api/appointments/:id/attendance', ctx => appointmentWrite(ctx, 'attendance', () => appts.attendance(Number(ctx.params.id), ctx.body, ctx.session.userId), 200, true));
+route('POST', '/api/appointments/:id/contact', ctx => appointmentWrite(ctx, 'contact', () => appts.contact(Number(ctx.params.id), ctx.body, ctx.session.userId), 200, true));
+
 route('POST', '/api/appointments/:id/cancel', ctx => {
   requireRole(ctx, 'doctor', 'front');
-  appts.cancel(Number(ctx.params.id));
-  send(ctx.res, 200, { ok: true });
+  appointmentWrite(ctx, 'cancel', () => ({ ...appts.cancel(Number(ctx.params.id), ctx.session.userId, ctx.body), ok: true }));
 });
 // เลื่อนนัดจบในปุ่มเดียว ไม่ต้อง cancel แล้วไปตั้งใหม่ที่คนไข้ (UAT D2)
 route('PATCH', '/api/appointments/:id', ctx => {
   requireRole(ctx, 'doctor', 'front');
-  send(ctx.res, 200, appts.reschedule(Number(ctx.params.id), ctx.body, ctx.session.userId));
+  appointmentWrite(ctx, 'reschedule', () => appts.reschedule(Number(ctx.params.id), ctx.body, ctx.session.userId));
 });
 route('GET', '/api/appointments', ctx => send(ctx.res, 200, appts.forMonth(ctx.query.month || now().slice(0, 7))));
 
@@ -841,6 +919,8 @@ route('GET', '/api/attachments/:id/file', ctx => {
 
 // ==================== reports / backup / admin ====================
 route('GET', '/api/reports/daily', ctx => send(ctx.res, 200, reports.daily(ctx.query.date)));
+route('GET', '/api/reports/drugs-monthly', ctx =>
+  send(ctx.res, 200, require('./lib/drug-report').monthlyDrugs(ctx.query.month)));
 route('GET', '/api/reports/ledger', ctx =>
   send(ctx.res, 200, reports.monthlyLedger(Number(ctx.query.year) || new Date().getFullYear())));
 route('GET', '/api/reports/ledger-csv', ctx => {
@@ -877,18 +957,42 @@ route('POST', '/api/recovery/configure', ctx => {
   requireRole(ctx);
   send(ctx.res, 200, recoveryService.configureDestinations(ctx.body));
 });
+route('POST', '/api/recovery/open', ctx => {
+  requireRole(ctx); requireHostLoopback(ctx);
+  if (!fs.existsSync(path.join(__dirname, '..', 'update', 'installed.marker'))) return send(ctx.res, 400, { error: 'กรุณาเปิดตัวช่วยกู้จากชุดโปรแกรมที่ติดตั้งแล้ว' });
+  const launcher = path.join(__dirname, 'launch', 'recovery.js');
+  const child = require('node:child_process').spawn(process.execPath, ['--no-warnings', launcher], { cwd: __dirname, detached: true, stdio: 'ignore', windowsHide: true });
+  child.unref(); send(ctx.res, 200, { ok: true });
+});
 route('POST', '/api/recovery/create-kit', ctx => {
   requireRole(ctx);
   send(ctx.res, 200, recoveryService.createKit(ctx.body.target_id));
 });
-route('POST', '/api/recovery/drill', ctx => {
+route('POST', '/api/recovery/password', async ctx => {
   requireRole(ctx);
-  send(ctx.res, 200, recoveryService.runDrill());
+  const remote = ctx.req.socket.remoteAddress, subject = `uid:${ctx.session.userId}`;
+  const gate = security.precheck('unlock', remote, subject);
+  if (!gate.ok) return send(ctx.res, 429, { error: gate.message });
+  if (!auth.unlockSession(ctx.session.sid, ctx.body.pin)) {
+    security.noteFailure('unlock', remote, subject);
+    return send(ctx.res, 401, { error: 'PIN ผู้ดูแลไม่ถูกต้อง' });
+  }
+  security.noteSuccess('unlock', remote, subject);
+  const saved = await recoveryService.setPassword(ctx.body);
+  if (TEST_INSTANCE_TOKEN && ctx.req.headers['x-clinic-test-token'] === TEST_INSTANCE_TOKEN && ctx.req.headers['x-clinic-test-crash'] === 'after-password-save') process.exit(88);
+  const result = backup.runBackup();
+  send(ctx.res, 200, { ok: true, password: saved, backup: result, health: recoveryService.health() });
+});
+route('POST', '/api/recovery/drill', async ctx => {
+  requireRole(ctx);
+  const result = await recoveryService.runDrill(ctx.body);
+  if (TEST_INSTANCE_TOKEN && ctx.req.headers['x-clinic-test-token'] === TEST_INSTANCE_TOKEN && ctx.req.headers['x-clinic-test-crash'] === 'after-password-drill') process.exit(88);
+  send(ctx.res, 200, result);
 });
 
 route('GET', '/api/users', ctx => {
   requireRole(ctx);
-  send(ctx.res, 200, db.prepare('SELECT id, username, display_name, display_name_en, role, active, created_at, medical_license, specialty FROM users').all());
+  send(ctx.res, 200, db.prepare('SELECT id, username, display_name, display_name_en, role, active, created_at, medical_license, specialty FROM users').all().map(u => ({ ...u, front_desk: u.role === 'doctor' && auth.canFrontDesk(u) })));
 });
 route('POST', '/api/users', ctx => {
   requireRole(ctx);
@@ -901,26 +1005,22 @@ route('POST', '/api/users', ctx => {
 route('PATCH', '/api/users/:id', ctx => {
   requireRole(ctx);
   const id = Number(ctx.params.id);
-  const b = ctx.body;
-  if (b.password) {
-    if (String(b.password).length < 8) throw Object.assign(new Error('รหัสผ่านต้องยาวอย่างน้อย 8 ตัวอักษร'), { status: 400 });
-    db.prepare('UPDATE users SET pass_hash = ? WHERE id = ?').run(auth.hashSecret(b.password), id);
-    const target = db.prepare('SELECT username, role FROM users WHERE id = ?').get(id);
-    if (target && target.username === 'admin') setSetting('setup_required', '0');
-  }
-  if (b.pin) {
-    if (!/^\d{4,6}$/.test(String(b.pin))) throw Object.assign(new Error('PIN ต้องเป็นตัวเลข 4-6 หลัก'), { status: 400 });
-    db.prepare('UPDATE users SET pin_hash = ? WHERE id = ?').run(auth.hashSecret(b.pin), id);
-  }
-  if ('active' in b) db.prepare('UPDATE users SET active = ? WHERE id = ?').run(b.active ? 1 : 0, id);
-  if (b.display_name) db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(b.display_name, id);
-  if ('display_name_en' in b) db.prepare('UPDATE users SET display_name_en = ? WHERE id = ?').run(b.display_name_en || null, id);
-  if ('medical_license' in b) db.prepare('UPDATE users SET medical_license = ? WHERE id = ?').run(b.medical_license || null, id);
-  if ('specialty' in b) db.prepare('UPDATE users SET specialty = ? WHERE id = ?').run(b.specialty || null, id);
-  send(ctx.res, 200, { ok: true });
+  if ('front_desk' in ctx.body) return exactlyOnce(ctx, 'front-permission', { status: 200, scope: id,
+    conflictField: 'saved_permission', conflictMessage: () => 'คำขอนี้บันทึกสิทธิ์ไปแล้ว กรุณาดูสถานะปัจจุบันในตารางผู้ใช้งาน' }, () => auth.updateUser(id, ctx.body));
+  const crashAt = TEST_INSTANCE_TOKEN && ctx.req.headers['x-clinic-test-token'] === TEST_INSTANCE_TOKEN
+    ? ctx.req.headers['x-clinic-test-crash'] : null;
+  const result = txn(() => {
+    const changed = auth.updateUser(id, ctx.body);
+    if (crashAt === 'before-commit') process.exit(1);
+    return changed;
+  });
+  if (crashAt === 'after-commit') process.exit(1);
+  send(ctx.res, 200, { ...result, reauthenticate: result.sessions_revoked && id === ctx.session.userId });
 });
 
-const SETTING_KEYS = ['clinic_name', 'clinic_address', 'clinic_phone', 'clinic_license',
+const medicationSheet = require('./lib/medication-sheet');
+const drugLabels = require('./lib/drug-labels');
+const SETTING_KEYS = [...Object.keys(medicationSheet.SETTINGS), ...Object.keys(drugLabels.SETTINGS), 'clinic_name', 'clinic_address', 'clinic_phone', 'clinic_license',
   'clinic_logo_file', 'document_footer', 'medcert_paper_size', 'medcert_font_scale', 'receipt_font_scale', 'appt_font_scale', 'stock_expiry_warn_days',
   'slip_paper', 'receipt_paper', 'appointment_paper',
   'clinic_name_en', 'clinic_address_en',
@@ -938,6 +1038,8 @@ route('GET', '/api/settings', ctx => {
 });
 route('POST', '/api/settings', ctx => {
   requireRole(ctx);
+  medicationSheet.validateSettings(ctx.body);
+  drugLabels.validateSettings(ctx.body);
   if ('receipt_tax_id' in ctx.body) {
     const digits = String(ctx.body.receipt_tax_id || '').replace(/[^0-9]/g, '');
     if (digits && digits.length !== 13) throw Object.assign(new Error('เลขประจำตัวผู้เสียภาษีต้องมี 13 หลัก'), { status: 400 });
@@ -960,15 +1062,30 @@ route('POST', '/api/settings/logo', ctx => {
 });
 
 // ==================== print pages ====================
+route('GET', '/print/labels/:no', ctx => {
+ const r=billing.getReceipt(ctx.params.no),message=drugLabels.problem(r);
+ const headers={'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'};
+ if(message)return send(ctx.res,!drugLabels.enabled()||!r?404:409,drugLabels.errorHTML(message),headers);
+ send(ctx.res,200,drugLabels.render(r,{...ctx.query,canPrint:['front','admin'].includes(ctx.session.role)}),headers);
+});
+route('GET', '/print/medication/:no', ctx => {
+  const r = billing.getReceipt(ctx.params.no);
+  const message = medicationSheet.problem(r);
+  if (message) return send(ctx.res, r ? 409 : 404, medicationSheet.errorHTML(message), { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+  send(ctx.res, 200, medicationSheet.render(r, { paper: ctx.query.paper, font: ctx.query.font, style: ctx.query.style }), { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+});
 route('GET', '/print/receipt/:no', ctx => {
   const r = billing.getReceipt(ctx.params.no);
   if (!r) return send(ctx.res, 404, 'ไม่พบใบเสร็จ');
   // ?paper=/?scale= = พิมพ์แบบอื่นเฉพาะครั้งนี้ (ค่าตั้งในหน้า Admin ยังเป็นหลัก) — ค่าที่ไม่รู้จักถูกเมิน
-  send(ctx.res, 200, print.receiptHTML(r, { copy: ctx.query.copy === '1', paper: ctx.query.paper, scale: ctx.query.scale }), { 'Content-Type': 'text/html; charset=utf-8' });
+  const html = print.receiptHTML(r, { copy: ctx.query.copy === '1', paper: ctx.query.paper, scale: ctx.query.scale });
+  send(ctx.res, 200, html.replace('<div class="noprint">', '<div class="noprint">' + medicationSheet.link(r) + drugLabels.link(r)), { 'Content-Type': 'text/html; charset=utf-8' });
 });
 // ตัวอย่างเอกสารข้อมูลสมมติ สำหรับลองกระดาษ/เครื่องพิมพ์จากหน้าตั้งค่า (ไม่แตะฐาน)
 route('GET', '/print/sample/:kind', ctx => {
   const paper = ctx.query.paper;
+  if (ctx.params.kind === 'labels') return send(ctx.res, 200, drugLabels.sample({...ctx.query,canPrint:['front','admin'].includes(ctx.session.role)}), {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+  if (ctx.params.kind === 'medication') return send(ctx.res, 200, medicationSheet.sample({ paper, font: ctx.query.font, style: ctx.query.style }), { 'Content-Type': 'text/html; charset=utf-8' });
   if (ctx.params.kind === 'receipt') return send(ctx.res, 200, print.sampleReceiptHTML(paper, ctx.query.scale), { 'Content-Type': 'text/html; charset=utf-8' });
   if (ctx.params.kind === 'appointment') return send(ctx.res, 200, print.sampleAppointmentHTML(paper, ctx.query.scale), { 'Content-Type': 'text/html; charset=utf-8' });
   // ?scale= ลองขนาดตัวอักษรก่อนกดบันทึก (ค่าที่บันทึกแล้วเป็นหลักเมื่อไม่ส่ง) — ค่าที่ไม่รู้จักถูกเมิน
@@ -981,15 +1098,16 @@ route('GET', '/print/medcert/:no', ctx => {
   send(ctx.res, 200, print.medCertHTML(c), { 'Content-Type': 'text/html; charset=utf-8' });
 });
 route('GET', '/print/appointment/:id', ctx => {
+  const multipleDoctors = doctors.multiple();
   const a = db.prepare(`
     SELECT a.*, p.prefix, p.first_name, p.last_name, u.display_name doctor_name
     FROM appointments a
     JOIN patients p ON p.hn = a.hn
     LEFT JOIN visits v ON v.id = a.visit_id
-    LEFT JOIN users u ON u.id = v.doctor_id
+    LEFT JOIN users u ON u.id = ${multipleDoctors ? 'COALESCE(a.doctor_id, v.doctor_id)' : 'v.doctor_id'}
     WHERE a.id = ?`).get(Number(ctx.params.id));
   if (!a || a.cancelled) return send(ctx.res, 404, 'ไม่พบนัด หรือนัดถูกยกเลิกแล้ว');
-  send(ctx.res, 200, print.appointmentSlipHTML(a, { paper: ctx.query.paper, scale: ctx.query.scale }), { 'Content-Type': 'text/html; charset=utf-8' });
+  send(ctx.res, 200, print.appointmentSlipHTML(a, { paper: ctx.query.paper, scale: ctx.query.scale, multipleDoctors }), { 'Content-Type': 'text/html; charset=utf-8' });
 });
 
 // ==================== server ====================
@@ -1022,7 +1140,7 @@ const handleRequest = async (req, res) => {
     const m = matchRoute(req.method, urlPath);
     if (!m) return send(res, 404, { error: 'ไม่พบ endpoint' });
 
-    const session = auth.getSession(parseCookies(req).csid);
+    const session = auth.getSession(parseCookies(req)[SESSION_COOKIE]);
     if (!m.opts.public) {
       if (!session) return send(res, 401, { error: 'กรุณา login' });
       if (session.locked && !m.opts.allowLocked) return send(res, 423, { error: 'หน้าจอถูกล็อก กรุณาปลดล็อกด้วย PIN' });
@@ -1048,7 +1166,7 @@ const handleRequest = async (req, res) => {
   } catch (e) {
     const status = e.status || (String(e.message).includes('UNIQUE') ? 409 : 500);
     if (status === 500) console.error(e);
-    if (!res.headersSent) send(res, status, { error: e.status ? e.message : `เกิดข้อผิดพลาด: ${e.message}` });
+    if (!res.headersSent) send(res, status, { error: e.status ? e.message : `เกิดข้อผิดพลาด: ${e.message}`, ...(e.replace_appointment ? {replace_appointment:e.replace_appointment} : {}) });
     // body ใหญ่เกิน: ตอบ 413 ให้ browser เห็นก่อน แล้วค่อยปิด socket ตัดการอัปโหลดที่เหลือ
     if (status === 413) res.on('finish', () => { try { req.destroy(); } catch {} });
   }

@@ -1,0 +1,17 @@
+/* Reserve space: a new call never moves a payment field. */
+.front-call-notices{position:sticky;top:var(--call-notice-top,56px);z-index:70;height:108px;box-sizing:border-box;padding:6px 12px;background:var(--bg);border-bottom:1px solid var(--line)}
+.call-notice-heading{font-size:15px;font-weight:700;display:flex;justify-content:space-between;gap:12px}
+.call-notice-heading small{font-size:11px;font-weight:400;color:var(--dim)}
+.call-notice-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:7px;height:76px;overflow-y:auto;align-content:start;padding:3px 1px}
+.call-notice-item{min-height:67px;box-sizing:border-box;display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:8px;align-items:center;border:2px solid var(--amber);border-left-width:6px;border-radius:12px;background:var(--amber-soft);color:var(--ink);padding:6px 10px}
+.call-notice-number{font-size:28px;line-height:1}
+.call-notice-person{min-width:0;display:flex;flex-direction:column}
+.call-notice-person strong,.call-notice-person span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.call-notice-person strong{font-size:16px}.call-notice-person span{font-size:13px}
+.call-notice-item .btn{white-space:nowrap;background:var(--card);color:var(--ink)}
+.call-notice-empty{color:var(--dim);padding:18px 10px;font-size:14px}
+body.front-with-calls #modalBack,body.front-with-calls #regBack{top:var(--call-notice-overlay-top,164px);padding-top:12px}
+body.front-with-calls #modalBack .modal-box,body.front-with-calls #regBack .reg-modal{max-height:calc(100dvh - var(--call-notice-overlay-top,164px) - 36px);overflow-y:auto}
+.doctor-queue-group{margin:14px 0 6px;font-size:17px;color:var(--ink)}.doctor-queue-group small{color:var(--dim);font-weight:400}
+.call-request-result{padding:10px 14px;margin:10px;border:2px solid var(--amber);border-radius:12px;background:var(--amber-soft)}
+@media(max-width:600px){.call-notice-heading small{display:none}.front-call-notices{padding-inline:6px}}

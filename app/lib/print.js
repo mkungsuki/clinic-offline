@@ -309,7 +309,7 @@ function sampleAppointmentHTML(paper, scale) {
   const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 14);
   return appointmentSlipHTML({ prefix: 'นาย', first_name: 'ตัวอย่าง', last_name: 'ทดลองพิมพ์', hn: '00-0000', appt_date: iso(next), days: 14,
-    doctor_name: 'นพ.ตัวอย่าง แพทย์', note: 'ติดตามอาการ (ตัวอย่าง)', created_at: `${iso(now)} 09:00:00` }, { paper, scale })
+    doctor_name: 'นพ.ตัวอย่าง แพทย์', note: 'ติดตามอาการ (ตัวอย่าง)', created_at: `${iso(now)} 09:00:00` }, { paper, scale, multipleDoctors: require('./doctors').multiple() })
     .replace('<h2 ', SAMPLE_STAMP + '<h2 ');
 }
 
@@ -469,7 +469,7 @@ function appointmentSlipHTML(a, opts = {}) {
 <div class="formline">ชื่อผู้ป่วย ${fill(patientName, 'wide')} HN ${fill(a.hn)}</div>
 <div class="formline">แพทย์นัดตรวจครั้งต่อไปวันที่</div>
 <div style="text-align:center;font-size:24px;font-weight:700;border:1.5px solid #000;border-radius:3mm;padding:4mm;margin:2mm 0">${thaiDateOnly(a.appt_date)}${a.days ? `<div style="font-size:13px;font-weight:400">(อีกประมาณ ${esc(a.days)} วันนับจากวันที่ออกใบนัด)</div>` : ''}</div>
-${showDoctor ? `<div class="formline">แพทย์ผู้ตรวจ ${fill(a.doctor_name, 'wide')}</div>` : ''}
+${showDoctor ? `<div class="formline">${opts.multipleDoctors ? 'นัดกับ' : 'แพทย์ผู้ตรวจ'} ${fill(a.doctor_name, 'wide')}</div>` : ''}
 ${showNote ? `<div class="formline">หมายเหตุ ${fill(a.note, 'wide')}</div>` : ''}
 <div class="formline">ออกใบนัดวันที่ ${fill(thaiDateOnly(a.created_at))}</div>
 <div class="notes" style="text-align:center;font-size:13px;margin-top:6mm">${esc(footerText)}${clinic.phone ? `<br>โทร. ${esc(clinic.phone)}` : ''}</div>`,

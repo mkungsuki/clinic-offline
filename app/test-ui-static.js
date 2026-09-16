@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const publicDir = path.join(__dirname, 'public');
 const files = fs.readdirSync(publicDir).filter(name => /\.(?:html|js)$/i.test(name));
@@ -36,11 +37,11 @@ test('window.open อยู่ใน helper reserve ก่อน await เท่
   assert.doesNotMatch(helper, /function reservePrintWindow[\s\S]{0,300}\bawait\b/);
 });
 
-test('10 print actions ใช้ reserve/finalize และมี persistent fallback', () => {
+test('11 print actions ใช้ reserve/finalize และมี persistent fallback', () => {
   const combined = sources.map(item => item.text).join('\n');
   const syncCalls = (combined.match(/openPrintWindow\s*\(/g) || []).length - 1; // หัก definition
   const reserveCalls = (combined.match(/reservePrintWindow\s*\(/g) || []).length - 2; // definition + call ใน openPrintWindow
-  assert.equal(syncCalls, 5, `print synchronous actions ต้องมี 5 จุด แต่พบ ${syncCalls}`);
+  assert.equal(syncCalls, 6, `print synchronous actions ต้องมี 6 จุด แต่พบ ${syncCalls}`);
   assert.equal(reserveCalls, 5, `print หลัง side effect ต้อง reserve ก่อน await 5 จุด แต่พบ ${reserveCalls}`);
   assert.match(combined, /function showPersistentPrintLink/);
   assert.match(combined, /id = 'printFallbacks'/);
@@ -213,7 +214,7 @@ test('แถบ offline ต้องลองใหม่เอง หายเ�
   assert.match(api401[0], /if \(ME\) localStorage\.setItem\('clinic_relogin_notice'/, '401 กลางงานต้องจำธง clinic_relogin_notice');
   const login = sources.find(item => item.name === 'login.html').text;
   assert.match(login, /clinic_relogin_notice/, 'login.html ต้องรู้จักธง relogin');
-  assert.match(login, /เพิ่งเริ่มทำงานใหม่[\s\S]*เป็นเรื่องปกติ/, 'ข้อความต้องบอกว่าปกติ + ข้อมูลไม่หาย');
+  assert.match(login, /หากเพิ่งเปลี่ยนรหัสผ่าน ให้ใช้รหัสใหม่ ข้อมูลที่บันทึกแล้วไม่หาย/, '401 ต้องอธิบายการเปลี่ยนสิทธิ์หรือหมดอายุโดยไม่เดาว่าเครื่องรีสตาร์ท');
 });
 
 // exactly-once (codex NO-GO 2026-08-24): connection ขาดหลัง commit แล้วผู้ใช้กดซ้ำ ห้ามได้ HN เบิ้ล
@@ -329,9 +330,9 @@ test('ขนาดตัวอักษรใบรับรอง: หมอเ
 test('เกี่ยวกับโปรแกรมทุกบทบาท โดยไม่ขยายสิทธิ์ผู้ดูแล และ QR อยู่ในการ์ดเดียว', () => {
   const admin = sources.find(s => s.name === 'admin.html').text;
   assert.match(admin, /id="aboutCard"/);
-  assert.match(admin, /class="cols hidden" id="adminControls"/);
+  assert.match(admin, /class="admin-shell hidden" id="adminControls"/);
   assert.match(admin, /if \(me.role !== 'admin'\) \{[^}]*return;/);
-  assert(admin.indexOf("if (me.role !== 'admin')") < admin.lastIndexOf('  load();'));
+  assert(admin.indexOf("if (me.role !== 'admin')") < admin.lastIndexOf('  setupAdminNavigation();'));
   assert.match(admin, /height:auto;object-fit:contain/);
   assert.deepEqual(sources.filter(s => s.text.includes('/donate-qr.png')).map(s => s.name), ['admin.html']);
   const root = path.resolve(__dirname, '..');
@@ -353,6 +354,257 @@ test('ตัวช่วย LAN คืน UTF-8 หลัง subprocess แล�
   assert.match(builder, /Show-ClinicBox \(\@\(/, 'error ต้องเป็น MessageBox');
 });
 
+test('appointment follow-up keeps durable result/history, retry identity and patient text escaping', () => {
+  const script = sources.find(s => s.name === 'appointments.js').text;
+  const page = sources.find(s => s.name === 'calendar.html').text;
+  assert.match(page, /id="appointmentResult"[^>]*role="status"/);
+  assert.match(script, /expected_event_id:dialogAppointment.last_event_id/);
+  assert.match(script, /savePendingMarker\(\{id,op_id\}\)/);
+  assert.match(script, /clinic_appt_pending_.*ME.user_id/);
+  assert.match(script, /already_saved/);
+  assert.match(script, /id="appointmentRetryBtn"/);
+  assert.match(script, /esc\(a.phone\)/);
+  assert.match(script, /esc\(e.note\)/);
+  assert.doesNotMatch(script, /localStorage\.setItem/);
+});
+
+test('monthly drug report keeps unknown costs, current-stock context and read-only retry', () => {
+  const script = sources.find(s => s.name === 'drug-report.js').text;
+  assert.match(script, /n == null \? 'ต้องตรวจ'/);
+  assert.match(script, /request !== sequence/);
+  assert.match(script, /table.innerHTML = ''/);
+  assert.match(script, /role="status"/);
+  assert.match(script, /overflow-x:auto/);
+  assert.match(script, /esc\(r.name\)/);
+  assert.match(script, /ไม่ใช่ยอดสิ้นเดือน/);
+  assert.doesNotMatch(script, /api\('(POST|PATCH|DELETE)'/);
+  const page = sources.find(s => s.name === 'reports.html').text;
+  assert.match(page, /missingDrugCosts \? 'ข้อมูลทุนไม่ครบ'/);
+  assert.match(page, /lg.total.unknown_cost_lines \? 'ยังคำนวณไม่ได้'/);
+  assert.match(page, /d.no_cost_lines \? 'ยังคำนวณไม่ได้'/);
+  assert.match(page, /ส่วนต่างก่อนส่วนลดบิล/);
+});
+
+test('ใบยาอ่านง่ายปิดก่อน ไม่ย่อ ไม่เปิด popup หลัง await และมี error ค้าง', () => {
+  const admin = sources.find(s=>s.name==='admin.html').text;
+  const sheet = fs.readFileSync(path.join(__dirname,'lib/medication-sheet.js'),'utf8');
+  assert.match(admin,/id="s_medication_sheet_enabled"><option value="0"/);
+  for(const id of ['s_medication_sheet_paper','s_medication_sheet_font','previewMedication'])assert(admin.includes('id="'+id+'"'));
+  assert.match(sheet,/const FONTS = \['18', '20', '24'\]/);
+  assert(!sheet.includes('window.open(')); assert(!sheet.includes('transform:scale'));
+  assert.match(sheet,/id="printError" role="alert"/); assert.match(sheet,/cache:'no-store'/);
+  const pagination=sources.find(s=>s.name==='medication-print.js').text;
+  assert.match(pagination,/Intl.Segmenter\('th',\{granularity:'grapheme'\}\)/);
+  assert.match(pagination,/identity.cloneNode\(true\)/);
+  assert.match(pagination,/วิธีใช้ยังมีต่อหน้าถัดไป/);
+  assert.match(pagination,/page-counter/);
+});
+test('visual dose proof and whole-card fallback remain read-only and printable', () => {
+  const visual=fs.readFileSync(path.join(__dirname,'lib/medication-visual.js'),'utf8');
+  const sheet=fs.readFileSync(path.join(__dirname,'lib/medication-sheet.js'),'utf8');
+  const pagination=sources.find(s=>s.name==='medication-print.js').text;
+  assert.match(visual,/doseText\(dose, line.unit\) === line.instructions/);
+  assert.match(visual,/o.ref_id===r.ref_id/);assert.match(visual,/o.qty===r.qty/);
+  assert.match(sheet,/WHERE id = \? AND visit_id = \?/);
+  assert.match(sheet,/name="style"/);assert.match(visual,/อ่านตามข้อความ/);
+  assert.match(pagination,/visualTooTall=true;literalFallback\(\)/);
+  assert.match(pagination,/window.medicationPaginationReady=false/);
+  assert(!visual.includes('fetch('));assert(!sheet.includes('UPDATE '));
+});
+test('admin landing, direct role guard, scoped saves and unsaved navigation remain together', () => {
+  const login = sources.find(s=>s.name==='login.html').text;
+  const common = sources.find(s=>s.name==='common.js').text;
+  const admin = sources.find(s=>s.name==='admin.html').text;
+  const nav = sources.find(s=>s.name==='admin-navigation.js').text;
+  assert.match(login, /r.role === 'admin' \? '\/admin.html'/);
+  assert.match(common, /ME.role === 'admin' && pageKey !== 'admin'/);
+  assert(common.indexOf("location.replace('/admin.html')") < common.indexOf('const nav = ['));
+  for(const file of ['index.html','exam.html','calendar.html','stock.html','reports.html'])
+    assert.match(sources.find(s=>s.name===file).text, /<html lang="th" class="role-routing">/);
+  assert.match(css,/html\.role-routing body\s*\{\s*visibility: hidden/);
+  assert.match(admin,/const body = adminSettingsPayload\(adminSection\)/);
+  assert.match(nav,/closest\('\[data-admin-section\]'\)/);
+  assert.match(nav,/beforeunload/); assert.match(nav,/adminSaving \|\| adminIsDirty\(\)/);
+  assert.match(admin,/id="adminSaveError" role="alert"/);
+  assert.match(admin,/Object.entries\(body\).every/);
+  assert.match(css, /#toast\s*\{[^}]*pointer-events:\s*none/);
+});
+test('document visibility uses exclusive labelled buttons and keeps saved setting keys', () => {
+  const admin=sources.find(s=>s.name==='admin.html').text;
+  const nav=sources.find(s=>s.name==='admin-navigation.js').text;
+  for(const key of ['receipt_show_doctor','appt_slip_show_doctor','appt_slip_show_note']) {
+    assert(admin.includes(`id="s_${key}" hidden aria-hidden="true"`));
+    assert(admin.includes(`data-setting="s_${key}"`));
+  }
+  assert.match(admin,/role="group" aria-labelledby=/);
+  assert.match(admin,/\.document-choice.*data-value="0".*background: #b42318/);
+  assert.match(admin,/\.document-choice.*data-value="1".*background: #245eea/);
+  assert.match(nav,/field.dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\)/);
+  assert.match(admin,/syncDocumentVisibility\(\);/);
+});
+test('multi-doctor UI hides choices for one doctor and retains replacement/retry outcomes', () => {
+  const common=sources.find(s=>s.name==='common.js').text;
+  const exam=sources.find(s=>s.name==='exam.html').text;
+  const front=sources.find(s=>s.name==='index.html').text;
+  assert.match(common,/if \(!multipleDoctors\(\)\) return ''/);
+  assert.match(exam,/v.doctor_id===ME.user_id \?[^\n]*เปิดต่อ/);
+  assert.match(exam,/previousAppointment=cur.appointment/);
+  assert.match(exam,/previousAppointment\?\.hn===cur.hn/);
+  assert.match(front,/ccEl\?\.dataset.hn===body.hn && ccEl.value===body.cc/);
+  assert.match(exam,/replace_revision:e.data.replace_appointment.revision/);
+  assert.match(exam,/examAppointmentNotice\('ยังไม่ได้เปลี่ยนนัด/);
+  assert.match(front,/id='enqueueResult'/);
+  assert.match(front,/pendingEnqueue.*op_id:crypto.randomUUID/);
+  assert.match(front,/pendingEnqueue.hn!==hn/);
+  assert.match(exam,/pendingExamAppointment.visitId!==cur.id/);
+  assert.match(exam,/pendingExamAppointment.visitId!==cur\?\.id/);
+  assert.match(sources.find(s=>s.name==='appointments.js').text,/pendingAppointment.id!==id/);
+});
+test('drug labels block overflow and doctor printing, revalidate before print',()=>{
+  const src=sources.find(s=>s.name==='drug-label-print.js').text;
+  const renderer=fs.readFileSync(path.join(__dirname,'lib','drug-labels.js'),'utf8');
+  assert.match(src,/content.scrollHeight>content.clientHeight/);
+  assert.match(src,/labelReady=!errors.length&&document.body.dataset.canPrint==='1'/);
+  assert.match(src,/fetch\(location.href,\{cache:'no-store',redirect:'error'/);
+  assert.match(renderer,/body.labels-blocked #labelPages\{display:none!important\}/);
+  assert(!/text-overflow|line-clamp|overflow:hidden/.test(renderer));
+});
+test('queue call notice stays nonmodal, locally acknowledged, and safely grouped',()=>{
+  const front=sources.find(s=>s.name==='index.html').text,exam=sources.find(s=>s.name==='exam.html').text;
+  const notice=fs.readFileSync(path.join(__dirname,'public/queue-notices.js'),'utf8');
+  const css=fs.readFileSync(path.join(__dirname,'public/queue-notices.css'),'utf8');
+  assert.match(front,/sequence !== refreshSequence/);assert.match(front,/callNotices\?\.update\(queue\)/);
+  assert(!notice.includes('.focus('));assert(!notice.includes('openModal('));assert(!notice.includes('setTimeout('));
+  assert.match(css,/height:108px/);assert.match(css,/z-index:70/);assert.match(exam,/if\(multipleDoctors\(\)\)/);
+  assert.match(front,/payHtml!==_lastPayQueueHTML/);
+  assert.match(exam,/current.doctor_id!==ME.user_id/);assert.match(exam,/callResult\('ยังยืนยันผลเรียกคิวไม่ได้/);
+});
+test('trial transition keeps sessions separate and destructive confirmation guarded',()=>{
+  const server=fs.readFileSync(path.join(__dirname,'server.js'),'utf8');
+  const script=fs.readFileSync(path.join(__dirname,'scripts/trial-to-production.ps1'),'utf8');
+  const builder=fs.readFileSync(path.join(__dirname,'tools/build-installer.js'),'utf8');
+  assert.match(server,/'csid_trial' : 'csid_live'/);assert.match(server,/parseCookies\(req\)\[SESSION_COOKIE\]/);
+  assert.match(script,/'YesNo','Warning','Button2'/);assert.match(script,/installed\.marker/);assert.match(script,/NoLinks \$state.cleanup/);
+  assert(script.includes("$profile.variant -ne 'trial'"));assert(script.includes('TRANSITION_TEST_ROOT'));
+  assert.match(builder,/if errorlevel 1 exit \/b 1/);assert(builder.includes('ส่งไปเครื่องหมอ (ทดลอง)'));
+});
+test('account changes and runtime maintenance retain visible outcomes',()=>{
+ const admin=sources.find(s=>s.name==='admin.html').text,login=sources.find(s=>s.name==='login.html').text;
+ assert.match(admin,/id="accountChangeHelp"/);assert.match(admin,/credentialResult/);assert.match(login,/account_changed/);
+ assert.match(admin,/id="runtimeSummary"/);assert(admin.includes('onclick="loadRuntimeStatus()"'));assert.match(admin,/ตรวจกล่องบนเครื่องหน้าร้านและสถานะก่อนกดซ้ำ/);
+});
+test('service costs retain unknown state and persistent retry/outcome UI',()=>{
+ const stock=sources.find(s=>s.name==='stock.html').text,reports=sources.find(s=>s.name==='reports.html').text;
+ assert.match(stock,/id="svcCost"/);assert.match(stock,/id="serviceSaveStatus" role="status"/);
+ assert.match(stock,/sessionStorage\.setItem\('clinic_service_save'/);assert.match(stock,/op_id: crypto\.randomUUID\(\)/);
+ assert.match(stock,/id="retryServiceSave"/);assert.match(stock,/pendingServiceSave/);assert.doesNotMatch(stock,/กำไรจะนับทุน 0/);
+ assert.match(reports,/m\.service_cost/);assert.match(reports,/m\.direct_cost/);assert.match(reports,/เหลือหลังต้นทุนตรง/);
+ assert.doesNotMatch(reports,/กำไรขั้นต้น/);
+});
+test('solo doctor remains opt-in with durable finish and checkout outcomes',()=>{
+ const admin=sources.find(s=>s.name==='admin.html').text,exam=sources.find(s=>s.name==='exam.html').text,front=sources.find(s=>s.name==='index.html').text;
+ assert.match(admin,/data-front-user/);assert.match(admin,/id="frontPermissionResult" role="status"/);assert.match(admin,/retryFrontPermission/);
+ assert.match(exam,/restoreFinish\(\)/);assert.match(exam,/sessionStorage\.setItem\(finishStorageKey\(\)/);assert.match(exam,/op_id:crypto\.randomUUID\(\)/);
+ assert.match(exam,/host\.id='finishResult'/);assert.match(exam,/b\.id='retryFinish'/);assert.match(exam,/a\.id='finishNext'/);assert.match(exam,/ME\.can_front_desk/);
+ assert.match(front,/box\.id='checkoutResult'/);assert.match(front,/me\.can_front_desk/);assert.match(front,/await selectBill\(checkoutId\)/);
+});
+test('drug defaults use numeric templates and retain visible recovery and legacy review',()=>{
+ const stock=sources.find(s=>s.name==='stock.html').text,exam=sources.find(s=>s.name==='exam.html').text;
+ assert.match(stock,/id="drugDoseEditor"/);assert.match(stock,/id="drugSaveStatus" role="status"/);
+ assert.match(stock,/sessionStorage\.setItem\('clinic_drug_save'/);assert.match(stock,/id="retryDrugSave"/);
+ assert.match(stock,/default_dose: template/);assert.match(exam,/DoseTemplate\.read\(it\)/);
+ assert.doesNotMatch(exam,/parseDoseFromText|PRN_TEXT_RE/);assert.match(exam,/class="dose-missing"/);
+ assert.match(exam,/dose-text-review/);assert.match(exam,/useCalculatedInstructions/);
+});
+function backupUiContext(role = 'admin') {
+  const banner = { innerHTML: '' };
+  const context = vm.createContext({
+    document: { documentElement: { setAttribute() {} }, addEventListener() {}, getElementById: () => banner },
+    localStorage: { getItem: () => null },
+  });
+  vm.runInContext(sources.find(s => s.name === 'common.js').text, context);
+  vm.runInContext(`ME = { role: ${JSON.stringify(role)} }`, context);
+  return { context, banner };
+}
+test('ข้อความสำรองไม่อ้างว่า copy เข้า sync folder คืออยู่บนคลาวด์หรือกู้ได้แล้ว', () => {
+  const common = sources.find(s => s.name === 'common.js').text;
+  const service = fs.readFileSync(path.join(__dirname, 'lib/recovery-service.js'), 'utf8');
+  const admin = sources.find(s => s.name === 'admin.html').text;
+  assert.doesNotMatch(service, /ข้อมูลปลอดภัยแล้ว/);
+  assert.doesNotMatch(common, /สำเนาบนคลาวด์|ตรวจแล้ว ใช้งานได้/);
+  assert.doesNotMatch(admin, /h\.offDeviceOk\s*\?/);
+  for (const file of ['admin.html', 'reports.html']) {
+    assert.match(sources.find(s => s.name === file).text, /toast\(backupRunToastText\(r\)/);
+  }
+});
+test('ผลสำรองแยก cloud copy ที่ยังไม่ยืนยัน upload ออกจาก local/external และ failure', () => {
+  const { context } = backupUiContext();
+  const cloud = vm.runInContext(`backupTargetText({kind:'cloud_sync',ok:true,state:'encrypted_to_sync_folder'})`, context);
+  assert.match(cloud, /โฟลเดอร์คลาวด์/);
+  assert.match(cloud, /ยังไม่ยืนยันการอัปโหลด/);
+  for (const kind of ['local', 'external']) {
+    const text = vm.runInContext(`backupTargetText({kind:'${kind}',ok:true})`, context);
+    assert.doesNotMatch(text, /คลาวด์|อัปโหลด/);
+  }
+  const failed = vm.runInContext(`backupTargetText({kind:'cloud_sync',ok:false,error:'พื้นที่เต็ม'})`, context);
+  assert.match(failed, /ไม่สำเร็จ.*พื้นที่เต็ม/);
+  assert.doesNotMatch(failed, /คัดลอก.*แล้ว/);
+});
+test('admin และผู้ใช้งานเห็นข้อจำกัด upload แม้สำรองล่าสุดสำเร็จ', () => {
+  for (const role of ['admin', 'doctor', 'front']) {
+    const { context, banner } = backupUiContext(role);
+    vm.runInContext(`renderBackupBanner({ok:true,coverage:'multi_copy',cloud_key_exported:true,
+      cloud:{kind:'cloud_sync',ok:true,state:'encrypted_to_sync_folder'}})`, context);
+    assert.match(banner.innerHTML, /ยังไม่ยืนยันการอัปโหลด/, role);
+  }
+});
+test('health แยกหลักฐาน cloud folder จาก external แม้มี Kit และเคยซ้อมกู้', () => {
+  const stamp = new Date().toISOString();
+  const cloud = { kind: 'cloud_sync', ok: true, state: 'encrypted_to_sync_folder' };
+  const status = { ok: true, lastGood: { finished_at: stamp }, off_device_ok: true, cloud, targets: [cloud] };
+  const context = vm.createContext({ module: { exports: {} }, __dirname: path.join(__dirname, 'lib'),
+    require(name) {
+      if (name.startsWith('node:')) return require(name);
+      if (name === './db') return { DATA_DIR: 'synthetic-only', getSetting: key => key === 'recovery_kit_fingerprint' ? 'synthetic-fingerprint' : stamp };
+      if (name === './backup') return { status: () => status };
+      if (name === './password-recovery') return { localStatus: () => ({ ready: false }) };
+      if (['./recovery-core', './recovery-discovery', './recovery-kit'].includes(name)) return {};
+      throw new Error('Unexpected module: ' + name);
+    },
+  });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'lib/recovery-service.js'), 'utf8'), context);
+  const health = context.module.exports.health();
+  assert.match(health.headline, /ยังไม่ยืนยันการอัปโหลด/);
+  assert.notEqual(health.state, 'safe');
+  assert.equal(health.cloudCopyOk, true);
+  assert.equal(health.externalCopyOk, false);
+  status.cloud = null; status.targets = [{ kind: 'external', ok: true }];
+  const external = context.module.exports.health();
+  assert.equal(external.externalCopyOk, true);
+  assert.equal(external.cloudCopyOk, false);
+  assert.doesNotMatch(external.headline, /คลาวด์|ปลอดภัยแล้ว/);
+});
+test('trial reset/uninstall preserves operation before dispatch and durable failure guidance',()=>{
+  const js=fs.readFileSync(path.join(publicDir,'trial-tools.js'),'utf8'),html=fs.readFileSync(path.join(publicDir,'trial-tools.html'),'utf8');
+  assert(js.indexOf('localStorage.setItem')<js.indexOf('\n sendTrial();'));
+  assert.match(js,/body:JSON.stringify\(trialOperation\)/);assert.match(js,/ยังยืนยันผลคำสั่งไม่ได้/);
+  assert.match(html,/id="trialResult"[^>]+role="status"/);assert.match(html,/id="retryTrial"/);
+  assert.match(html,/id="resetTrial"/);assert.match(html,/id="uninstallTrial"/);
+  const server=fs.readFileSync(path.join(__dirname,'server.js'),'utf8');assert(server.indexOf('trial-start-guard')<server.indexOf("require('./lib/db')"));
+  const ps=fs.readFileSync(path.join(__dirname,'scripts/trial-maintenance.ps1'),'utf8');assert.match(ps,/'YesNo','Warning','Button2'/);assert.match(ps,/function DeleteScoped/);assert.match(ps,/synthetic-trial-tools-only/);
+});
+test('password recovery keeps persistent outcomes and never stores typed secrets in browser storage', () => {
+  const admin = sources.find(s => s.name === 'admin.html').text;
+  const helper = fs.readFileSync(path.join(publicDir, 'recovery.html'), 'utf8');
+  assert.match(admin, /id="passwordResult" aria-live="polite"/);
+  assert.match(admin, /expected_id: recoveryHealth\?\.password\?\.id/);
+  assert.match(admin, /sessionStorage\.setItem\('recovery-password-operation', JSON\.stringify\(op\)\)/);
+  assert.match(admin, /document\.getElementById\(id\)\.value = ''/);
+  assert.match(helper, /lastOperation\?\.state==='published'/);
+  assert.match(helper, /resumeRestore\(data\.lastOperation\.id\)/);
+  assert.match(helper, /id="backupPassword" type="password" autocomplete="current-password"/);
+  assert.doesNotMatch(admin + helper, /(?:localStorage|sessionStorage)\.setItem\([^\n]*(?:JSON\.stringify\(body\)|password:|\.value)/i);
+});
 if (process.exitCode) process.exit(process.exitCode);
 console.log(`
 UI static: ${passed} tests passed`);

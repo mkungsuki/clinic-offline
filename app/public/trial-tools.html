@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>จัดการชุดทดลอง</title><link rel="stylesheet" href="/app.css">
+<style>main{max-width:850px;margin:24px auto;padding:0 16px}.choices{display:grid;gap:20px}main button{min-height:48px;white-space:normal}.result{white-space:pre-wrap;overflow-wrap:anywhere;padding:16px;border:2px solid var(--blue);border-radius:12px;margin:20px 0}[hidden]{display:none!important}</style></head>
+<body><main><a href="/admin.html?section=system">กลับไปหน้าตั้งค่า</a><h1>จัดการชุดทดลอง</h1>
+<p id="availability" role="status">กำลังตรวจชุดทดลอง…</p>
+<div id="choices" class="choices" hidden>
+<section class="card"><h2>เริ่มฝึกใหม่</h2><p>ลบสิ่งที่เคยฝึก บัญชี การตั้งค่า และสำเนาที่เก็บในชุดทดลอง แล้วกลับไปมีข้อมูลตัวอย่างเหมือนตอนติดตั้งใหม่ โปรแกรมและการเชื่อมเครื่องหมอยังอยู่</p><button class="btn primary" id="resetTrial" onclick="beginTrial('reset')">เริ่มฝึกใหม่</button></section>
+<section class="card"><h2>ถอนชุดทดลองและข้อมูลฝึกทั้งหมด</h2><p>เลิกใช้เดโมบนเครื่องนี้ ลบโปรแกรม ข้อมูลและสำเนาในชุดทดลอง ทางลัด และการเชื่อมต่อของชุดทดลอง</p><button class="btn ghost-red" id="uninstallTrial" onclick="beginTrial('uninstall')">ถอนชุดทดลองและข้อมูลฝึกทั้งหมด</button></section>
+<p>ทั้งสองคำสั่งย้อนกลับไม่ได้ และจะมีกล่อง Windows ให้ยืนยันอีกครั้ง หากเคยใส่ข้อมูลคนไข้จริงให้ยกเลิกก่อน<br>ไฟล์ ZIP โฟลเดอร์ส่งไปเครื่องหมอ และสำเนาที่ส่งออกไป USB/คลาวด์หรือเครื่องอื่นต้องลบแยกเอง</p>
+</div>
+<div id="trialResult" class="result" role="status" aria-live="polite" hidden></div>
+<button class="btn" id="retryTrial" onclick="sendTrial()" hidden>เปิดตัวช่วยงานเดิมอีกครั้ง</button>
+<button class="btn" id="newTrialOperation" onclick="newTrialOperation()" hidden>งานเดิมจบหรือยกเลิกแล้ว กลับไปเลือกคำสั่ง</button>
+</main><script src="/common.js"></script><script src="/trial-tools.js"></script></body></html>

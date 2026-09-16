@@ -1,0 +1,23 @@
+'use strict';
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert/strict'),{spawnSync}=require('node:child_process');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'clinic-auth-lifecycle-'));process.env.CLINIC_DATA_DIR=dir;
+const {db,txn,getSetting}=require('./lib/db'),auth=require('./lib/auth');let passed=0;
+function check(name,fn){fn();passed++;console.log('AUTH PASS: '+name);}
+const id=Number(auth.createUser({username:'synthetic-user',displayName:'Synthetic',role:'doctor',password:'Synthetic-old-123',pin:'1234'},null).lastInsertRowid);
+const login=()=>auth.createSession(auth.login('synthetic-user','Synthetic-old-123'));
+let one=login(),two=login(),oldFile=fs.readFileSync(auth.SESSION_FILE);
+check('invalid PIN rejects entire multi-field change',()=>{assert.throws(()=>auth.updateUser(id,{password:'Synthetic-new-123',pin:'bad',active:false}),{status:400});assert(auth.login('synthetic-user','Synthetic-old-123'));assert(auth.getSession(one));});
+check('database failure rolls back credentials and setup state',()=>{assert.throws(()=>auth.updateUser(id,{password:'Synthetic-new-123',medical_license:{bad:true}}));assert(auth.login('synthetic-user','Synthetic-old-123'));assert.equal(getSetting('auth_revision_'+id,'0'),'0');});
+check('disable invalidates both sessions and unlock',()=>{auth.updateUser(id,{active:false});assert.equal(auth.getSession(one),null);assert.equal(auth.getSession(two),null);assert.equal(auth.unlockSession(one.split('.')[0],'1234'),false);});
+check('reenable never resurrects a previously saved cookie',()=>{auth.updateUser(id,{active:true});fs.writeFileSync(auth.SESSION_FILE,oldFile);const r=spawnSync(process.execPath,['--no-warnings','-e',"const a=require('./lib/auth');if(a.getSession(process.env.SYNTH_COOKIE))process.exit(2);require('./lib/db').db.close()"],{cwd:__dirname,env:{...process.env,SYNTH_COOKIE:one},encoding:'utf8',windowsHide:true});assert.equal(r.status,0,r.stderr);});
+one=login();two=login();
+check('password reset revokes every existing session',()=>{auth.updateUser(id,{password:'Synthetic-new-123'});assert.equal(auth.getSession(one),null);assert.equal(auth.getSession(two),null);assert.equal(auth.login('synthetic-user','Synthetic-old-123'),null);});
+one=auth.createSession(auth.login('synthetic-user','Synthetic-new-123'));
+check('retrying identical change keeps newly authenticated session',()=>{const revision=getSetting('auth_revision_'+id);assert.equal(auth.updateUser(id,{password:'Synthetic-new-123'}).sessions_revoked,false);assert.equal(getSetting('auth_revision_'+id),revision);assert(auth.getSession(one));});
+check('PIN change revokes existing login and old PIN',()=>{auth.updateUser(id,{pin:'5678'});assert.equal(auth.getSession(one),null);one=auth.createSession(auth.login('synthetic-user','Synthetic-new-123'));assert.equal(auth.unlockSession(one.split('.')[0],'1234'),false);assert(auth.unlockSession(one.split('.')[0],'5678'));});
+check('profile-only edits keep session and refresh displayed name',()=>{auth.updateUser(id,{display_name:'Renamed synthetic'});assert.equal(auth.getSession(one).displayName,'Renamed synthetic');});
+check('outer transaction failure does not revoke valid session',()=>{assert.throws(()=>txn(()=>{auth.updateUser(id,{active:false});throw Error('synthetic failure');}));assert(auth.getSession(one));});
+check('ordinary restart preserves current session',()=>{auth.saveSessionsNow();const r=spawnSync(process.execPath,['--no-warnings','-e',"const a=require('./lib/auth');if(!a.getSession(process.env.SYNTH_COOKIE))process.exit(2);require('./lib/db').db.close()"],{cwd:__dirname,env:{...process.env,SYNTH_COOKIE:one},encoding:'utf8',windowsHide:true});assert.equal(r.status,0,r.stderr);});
+check('logout and unknown user fail closed',()=>{auth.destroySession(one.split('.')[0]);assert.equal(auth.getSession(one),null);assert.throws(()=>auth.updateUser(99999,{active:false}),{status:404});});
+check('existing integer active contract remains supported',()=>{auth.updateUser(id,{active:0});assert.equal(auth.login('synthetic-user','Synthetic-new-123'),null);auth.updateUser(id,{active:1});assert(auth.login('synthetic-user','Synthetic-new-123'));assert.throws(()=>auth.updateUser(id,{active:'0'}),{status:400});});
+db.close();console.log('AUTH LIFECYCLE PASS: '+passed);

@@ -2,6 +2,7 @@
 // Stock: ledger (stock_movements) คือ source of truth; drugs.qty_on_hand เป็น cache
 // การขยับ stock ทุกกรณีผ่าน move() เท่านั้น (plan §1)
 const { db, txn, now, round2 } = require('./db');
+const DoseTemplate = require('../public/dose-template');
 
 function err(msg, status = 400) { return Object.assign(new Error(msg), { status }); }
 
@@ -46,7 +47,7 @@ function listServices(includeInactive = false) {
 
 function searchItems(q, limit = 15) {
   const like = `%${String(q || '').trim().replace(/[%_\\]/g, c => '\\' + c)}%`;
-  const drugs = db.prepare(`SELECT id, 'drug' AS type, name, generic_name, unit, price, qty_on_hand, default_instructions, dose_mode
+  const drugs = db.prepare(`SELECT id, 'drug' AS type, name, generic_name, unit, price, qty_on_hand, default_instructions, dose_mode, default_dose_json
     FROM drugs WHERE active = 1 AND (name LIKE ? ESCAPE '\\' OR generic_name LIKE ? ESCAPE '\\' OR code LIKE ? ESCAPE '\\')
     ORDER BY name LIMIT ?`).all(like, like, like, limit);
   const services = db.prepare(`SELECT id, 'service' AS type, name, NULL AS generic_name, 'ครั้ง' AS unit, price,
@@ -105,22 +106,31 @@ function listLots(drugId, includeCleared = false) {
 }
 
 function upsertDrug(data, id = null) {
+  if (!data || typeof data.name !== 'string' || !data.name.trim()) throw err('ใส่ชื่อยา');
+  const previous = id ? db.prepare('SELECT * FROM drugs WHERE id=?').get(id) : null;
+  if (id && !previous) throw err('ไม่พบรายการยา', 404);
+  const hasDefault = Object.hasOwn(data, 'default_dose');
+  const template = hasDefault ? DoseTemplate.normalize(data.default_dose, data.unit || 'เม็ด') : null;
+  if (!hasDefault && previous?.default_dose_json && ((data.unit && data.unit !== previous.unit) || (data.dose_mode && data.dose_mode !== previous.dose_mode))) throw err('หน่วยหรือรูปแบบยาเปลี่ยน กรุณาทวนตารางวิธีใช้เริ่มต้นก่อนบันทึก');
+  if (!hasDefault && previous?.default_dose_json && Object.hasOwn(data, 'default_instructions') && data.default_instructions !== previous.default_instructions) throw err('กรุณาแก้วิธีใช้เริ่มต้นผ่านตารางขนาดยาแล้วบันทึกอีกครั้ง');
+  const defaultJson = hasDefault ? (template ? JSON.stringify(template) : null) : previous?.default_dose_json || null;
   const cost = data.cost === '' || data.cost == null ? null : round2(Number(data.cost) || 0);
   // client ที่ไม่ส่ง field มาเลย (เช่น import CSV) ต้องไม่ล้างค่าเดิม — ส่งค่าว่าง = ตั้งใจล้าง (กลับไปใช้ค่ากลาง)
   const hasWarn = 'expiry_warn_days' in data;
   const warnDays = hasWarn ? normalizeWarnDays(data.expiry_warn_days) : null;
-  const doseMode = ['standard', 'exact_times', 'prn', 'manual'].includes(data.dose_mode) ? data.dose_mode : 'standard';
-  const vals = [data.code || null, data.name.trim(), data.generic_name || null, data.unit || 'เม็ด',
-    round2(Number(data.price) || 0), cost, Number(data.reorder_level) || 0, data.default_instructions || null,
+  const doseMode = template?.mode || (['standard', 'exact_times', 'prn', 'manual'].includes(data.dose_mode) ? data.dose_mode : previous?.dose_mode || 'standard');
+  const instructions = template ? DoseTemplate.text(template, data.unit) : (!hasDefault && previous?.default_dose_json ? previous.default_instructions : data.default_instructions || null);
+  const vals = [data.code || null, data.name.trim(), data.generic_name || null, data.unit || previous?.unit || 'เม็ด',
+    round2(Number(data.price) || 0), cost, Number(data.reorder_level) || 0, instructions,
     doseMode, data.active === 0 ? 0 : 1];
   if (id) {
     db.prepare(`UPDATE drugs SET code = ?, name = ?, generic_name = ?, unit = ?, price = ?, cost = ?, reorder_level = ?,
-      default_instructions = ?, dose_mode = ?, active = ?${hasWarn ? ', expiry_warn_days = ?' : ''} WHERE id = ?`)
-      .run(...vals, ...(hasWarn ? [warnDays] : []), id);
+      default_instructions = ?, dose_mode = ?, active = ?, default_dose_json = ?${hasWarn ? ', expiry_warn_days = ?' : ''} WHERE id = ?`)
+      .run(...vals, defaultJson, ...(hasWarn ? [warnDays] : []), id);
     return id;
   }
-  const r = db.prepare(`INSERT INTO drugs (code, name, generic_name, unit, price, cost, reorder_level, default_instructions, dose_mode, active, expiry_warn_days)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(...vals, warnDays);
+  const r = db.prepare(`INSERT INTO drugs (code, name, generic_name, unit, price, cost, reorder_level, default_instructions, dose_mode, active, expiry_warn_days, default_dose_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(...vals, warnDays, defaultJson);
   return Number(r.lastInsertRowid);
 }
 
@@ -135,9 +145,25 @@ function setExpiryWarnDays(drugId, days) {
 }
 
 function upsertService(data, id = null) {
-  const vals = [data.name.trim(), round2(Number(data.price) || 0), data.active === 0 ? 0 : 1];
-  if (id) { db.prepare('UPDATE services SET name = ?, price = ?, active = ? WHERE id = ?').run(...vals, id); return id; }
-  const r = db.prepare('INSERT INTO services (name, price, active) VALUES (?, ?, ?)').run(...vals);
+  const old = id == null ? null : db.prepare('SELECT * FROM services WHERE id = ?').get(id);
+  if (id != null && !old) throw err('ไม่พบรายการค่าบริการนี้', 404);
+  const name = String(data.name ?? old?.name ?? '').trim();
+  if (!name || name.length > 200) throw err('ใส่ชื่อค่าบริการไม่เกิน 200 ตัวอักษร');
+  const money = (value, label, nullable) => {
+    if (value == null || (typeof value === 'string' && !value.trim())) {
+      if (nullable) return null;
+      throw err(`กรุณาใส่${label}`);
+    }
+    if (!['number','string'].includes(typeof value) || !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100000000)
+      throw err(`${label}ต้องเป็นตัวเลขตั้งแต่ 0 ถึง 100,000,000 บาท`);
+    return round2(Number(value));
+  };
+  const price = money(data.price === undefined ? old?.price : data.price, 'ราคาขาย', false);
+  const cost = money(data.cost === undefined ? old?.cost : data.cost, 'ต้นทุนต่อครั้ง', true);
+  const active = data.active === undefined ? old?.active ?? 1 : data.active === 0 || data.active === false ? 0 : 1;
+  const vals = [name, price, cost, active];
+  if (id != null) { db.prepare('UPDATE services SET name = ?, price = ?, cost = ?, active = ? WHERE id = ?').run(...vals, id); return id; }
+  const r = db.prepare('INSERT INTO services (name, price, cost, active) VALUES (?, ?, ?, ?)').run(...vals);
   return Number(r.lastInsertRowid);
 }
 

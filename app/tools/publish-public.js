@@ -9,14 +9,16 @@ const ROOT = path.resolve(__dirname, '../..');
 const DEV_FILES = [
   '.gitignore', 'seed-mock.js', ...release.TRIAL_SEED_FILES, 'codex-redteam-verification.js',
   'tools/build-installer.js', 'tools/build-hotfix.js', 'tools/build-update-package.js',
-  'tools/build-trial-docs.js', 'tools/publish-public.js',
+  'tools/fetch-runtime.js', 'tools/build-trial-docs.js', 'tools/publish-public.js',
+  'tools/verify-setup-package.js', 'tools/verify-prepared.cjs',
+  'tools/owner-release.cjs', 'tools/sign-release.ps1',
 ];
 // Private identifiers are represented as code points so the scanner can scan itself.
 const BLOCKED = [[107,97,110,112,105], [84,104,101,119,105,110,122,122,122],
   [3627,3617,3629,3648,3611,3636,3604,32,99,108,105,110,105,99],
   [109,107,117,110,103,117,107,105,64], [3652,3621,3609,3660],
   [81,117,105,99,107,32,65,115,115,105,115,116]].map(a => String.fromCodePoint(...a));
-const TEXT = /\.(js|json|html|css|md|txt|cmd|ps1|svg|yml|yaml)$/i;
+const TEXT = /\.(js|cjs|json|html|css|md|txt|cmd|ps1|svg|yml|yaml)$/i;
 const FORBIDDEN = /(?:^|\/)(?:data|\.ui-test-data|node_modules|\.git|_intake|output|dist)(?:\/|$)|recovery-key|private|\.(?:db(?:-wal|-shm)?|enc|key|log)$/i;
 const hash = b => crypto.createHash('sha256').update(b).digest('hex');
 function inside(root, rel) {
@@ -42,7 +44,7 @@ function walk(root, prefix = '') {
 }
 function collect(root = ROOT) {
   const app = path.join(root, 'app');
-  const rels = new Set([...release.APP_FILES, ...release.TOOL_FILES, ...DEV_FILES]);
+  const rels = new Set([...release.APP_FILES.filter(file => file !== require('../lib/runtime').RELATIVE), ...release.TOOL_FILES, ...DEV_FILES]);
   for (const dir of release.APP_DIRECTORIES) for (const rel of walk(path.join(app, dir))) {
     if (release.ALLOWED_RELEASE_EXTENSION.test(rel) && !release.FORBIDDEN_BASENAME.test(path.basename(rel))) rels.add(dir + '/' + rel);
   }

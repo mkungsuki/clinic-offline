@@ -27,7 +27,10 @@
 
   <g transform="translate(715 500)"><rect width="635" height="350" rx="18" fill="white" stroke="#d4e1e5"/><rect width="635" height="50" rx="18" fill="#e8eef2"/><rect y="32" width="635" height="18" fill="#e8eef2"/><text x="20" y="32" class="small">โฟลเดอร์ Clinic ทดลอง</text>
     <circle cx="48" cy="92" r="22" fill="#087b83"/><text x="41" y="101" class="step">4</text><text x="82" y="101" class="h">เปิดตัวติดตั้ง</text>
-    <circle cx="317" cy="185" r="45" fill="#dcebee"/><text x="291" y="202" font-size="48">⚙</text><text x="205" y="252" class="body" font-weight="700">ติดตั้งระบบคลินิก.cmd</text><text x="245" y="286" class="body" fill="#8d2f20" style="fill:#8d2f20" font-weight="700">ดับเบิลคลิกไฟล์นี้</text>
+    <rect x="28" y="127" width="580" height="48" rx="7" fill="#dcebee"/><text x="45" y="159" class="body" font-weight="700">ติดตั้งระบบคลินิก.cmd — ดับเบิลคลิกไฟล์นี้</text>
+    <text x="45" y="206" class="body">อ่านก่อนติดตั้ง.txt</text>
+    <text x="45" y="250" class="body">ชุดโปรแกรม (ไม่ต้องเปิด)</text>
+    <text x="45" y="289" class="small">เห็น 3 รายการ · กดเฉพาะไฟล์ติดตั้งด้านบน</text>
     <text x="40" y="326" class="small">รอจนเห็น “ติดตั้งเสร็จแล้ว” แล้วเปิดจากไอคอนบนหน้าจอ</text>
   </g>
   <rect x="160" y="890" width="1080" height="58" rx="14" fill="#dcebee"/><text x="215" y="926" class="body" font-weight="700">ชุดทดลองกับตัวจริงอยู่คนละบ้าน จึงเปิดพร้อมกันได้และข้อมูลไม่ปนกัน — ใช้ไอคอน ไม่ต้องจำเลขทางเข้า</text>

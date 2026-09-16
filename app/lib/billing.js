@@ -95,10 +95,12 @@ function insertReceiptWithLines({ visitId, hn, orderVersionId, lines, discount, 
   const ins = db.prepare(`INSERT INTO receipt_lines (receipt_no, line_type, ref_id, name, qty, unit, price_each, amount, instructions, cost_each, item_code)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const drugQ = db.prepare('SELECT cost, code FROM drugs WHERE id = ?');
+  const serviceQ = db.prepare('SELECT cost FROM services WHERE id = ?');
   for (const l of realLines) {
     // snapshot ทุน ณ เวลาขาย — แก้ทุนภายหลังไม่กระทบกำไรของบิลเก่า (หลักเดียวกับราคาขาย)
     const drug = l.type === 'drug' ? (drugQ.get(l.ref_id) || {}) : {};
-    const cost = l.type === 'drug' ? drug.cost ?? null : null;
+    const cost = l.type === 'drug' ? drug.cost ?? null
+      : l.type === 'service' && l.ref_id != null ? serviceQ.get(l.ref_id)?.cost ?? null : null;
     ins.run(receiptNo, l.type, l.ref_id, l.name, l.qty, l.unit, l.price_each,
       round2(l.qty * l.price_each), l.instructions || null, cost, text(l.item_code || drug.code, 100) || null);
     if (l.type === 'drug' && moveStock) stock.move(l.ref_id, 'dispense', -l.qty, { ref: receiptNo, userId });

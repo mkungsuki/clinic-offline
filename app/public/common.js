@@ -2,6 +2,17 @@
 // ของกลางทุกหน้า: api wrapper, topbar, lock overlay, poll, toast, format helpers
 
 let ME = null;
+let activeDoctors = [];
+function multipleDoctors() { return activeDoctors.length > 1; }
+function doctorChip(a, prefix = 'นัดกับ') { return multipleDoctors() && a?.doctor_name ? '<span class="chip doctor-chip">'+esc(prefix+' '+a.doctor_name)+'</span>' : ''; }
+function doctorSelect(id, selected, label = 'นัดกับ', empty = 'ไม่ระบุ') {
+  if (!multipleDoctors()) return '';
+  const known = activeDoctors.some(d => d.id === Number(selected));
+  return '<label class="f doctor-choice"><span>'+esc(label)+'</span><select id="'+id+'"><option value="">'+esc(empty)+'</option>'+
+    (!known && selected ? '<option selected value="'+Number(selected)+'">หมอที่นัดไว้เดิม (ไม่ได้เปิดใช้งาน)</option>' : '')+
+    activeDoctors.map(d => '<option value="'+d.id+'" '+(d.id===Number(selected)?'selected':'')+'>'+esc(d.display_name)+'</option>').join('')+'</select></label>';
+}
+function chosenDoctor(id) { const e=document.getElementById(id); return e ? {doctor_id:e.value?Number(e.value):null}:{}; }
 
 async function api(method, url, body) {
   let res;
@@ -204,6 +215,7 @@ function esc(s) {
 
 // ---------- modal กลาง: แทน prompt()/confirm() ของเบราว์เซอร์ทุกจุด (UAT C) ----------
 function openModal(html) {
+  document.dispatchEvent(new Event('clinic:modal-opening'));
   let back = document.getElementById('modalBack');
   if (!back) {
     back = document.createElement('div');
@@ -273,22 +285,34 @@ document.addEventListener('DOMContentLoaded', () => { document.querySelectorAll(
 
 // ---------- topbar ----------
 async function initPage(pageKey) {
-  try { ME = await api('GET', '/api/me'); }
-  catch { return null; }
+  try { ME = await api('GET', '/api/me'); if (['front','doctor'].includes(ME.role)) activeDoctors = await api('GET', '/api/doctors'); }
+  catch {
+    // A failed role check must not leave a blank screen or reveal clinical UI.
+    document.body.innerHTML = '<main class="card"><h1>ยังเปิดหน้านี้ไม่ได้</h1><p>กรุณาตรวจว่าเครื่องหลักเปิดอยู่ แล้วลองเปิดหน้าใหม่</p><a class="btn" href="/login.html">กลับไปเข้าสู่ระบบ</a></main>';
+    document.documentElement.classList.remove('role-routing');
+    return null;
+  }
+  // UI routing only: server permissions remain unchanged. Never start a
+  // clinical page's poll/forms for admin, including direct URLs and bookmarks.
+  if (ME.role === 'admin' && pageKey !== 'admin') {
+    location.replace('/admin.html');
+    return null;
+  }
+  document.documentElement.classList.remove('role-routing');
   const nav = [
     ['front', 'หน้าคลินิก', '/', ['front', 'doctor']],
     ['exam', 'ห้องตรวจ', '/exam.html', ['doctor']],
     ['calendar', 'นัดหมาย', '/calendar.html', ['front', 'doctor']],
-    ['stock', 'คลังยา', '/stock.html', ['front']],
+    ['stock', 'คลังยา', '/stock.html', ME.can_front_desk ? ['front','doctor'] : ['front']],
     ['reports', 'รายงาน', '/reports.html', ['front', 'doctor']],
-    ['admin', ME.role === 'admin' ? 'ตั้งค่า' : 'เกี่ยวกับโปรแกรม', '/admin.html', ['admin', 'doctor', 'front']],
+    ['admin', ME.role === 'admin' ? 'ตั้งค่า / ดูแลคลินิก' : 'เกี่ยวกับโปรแกรม', '/admin.html', ['admin', 'doctor', 'front']],
   ];
   const bar = document.createElement('div');
   bar.className = 'topbar';
   bar.innerHTML = `<span class="brand" id="brandName">คลินิก</span>
     <nav>${nav.filter(n => n[3].includes(ME.role)).map(n =>
       `<a href="${n[2]}" class="${n[0] === pageKey ? 'on' : ''}">${n[1]}</a>`).join('')}</nav>
-    <span class="who">${esc(ME.display_name)} (${{ doctor: 'แพทย์', front: 'หน้าคลินิก', admin: 'ผู้ดูแล' }[ME.role]})</span>
+    <span class="who">${esc(ME.display_name)} (${{ doctor: 'แพทย์', front: 'หน้าคลินิก', admin: 'ผู้ดูแล' }[ME.role]}${ME.role === 'doctor' && ME.can_front_desk ? ' + หน้าคลินิก' : ''})</span>
     ${themePickerHtml()}
     <a class="btn sm" id="supportReportBtn" href="/api/support-report" download
       title="รายงานไม่มีข้อมูลคนไข้ แต่ให้ตรวจและปิดชื่อผู้ใช้ ชื่อเครื่อง และที่อยู่โฟลเดอร์ก่อนแนบที่ github.com/mkungsuki/clinic-offline/issues ห้ามแนบข้อมูลคนไข้หรือกุญแจกู้">🆘 แจ้งปัญหา</a>
@@ -305,8 +329,8 @@ async function initPage(pageKey) {
   if (ME.clock_error) {
     banners.innerHTML = `<div class="banner red">⛔ ${esc(ME.clock_error)} <button class="btn sm" type="button" onclick="recheckClock()">🕒 ตรวจนาฬิกาอีกครั้ง</button></div>`;
   }
-  if (ME.setup_required) banners.innerHTML += `<div class="banner red">🔐 ยังใช้รหัสผู้ดูแลเริ่มต้นหรือยังไม่ยืนยันการตั้งระบบ — ไปหน้า “ตั้งค่า” แล้วเปลี่ยนรหัส admin ก่อนใช้ข้อมูลจริง</div>`;
-  if (ME.demo_mode) banners.innerHTML += `<div class="banner amber">🧪 ฐานข้อมูลนี้เปิด Demo mode และมีบัญชี/ข้อมูลตัวอย่าง ห้ามใช้เป็นฐาน production</div>`;
+  if (ME.setup_required) banners.innerHTML += `<div class="banner red">🔐 ยังใช้รหัสผู้ดูแลเริ่มต้นหรือยังไม่ยืนยันการตั้งระบบ — ${ME.role === 'admin' ? '<a href="/admin.html?section=users" style="color:inherit;text-decoration:underline">เปิดหมวดผู้ใช้งานเพื่อเปลี่ยนรหัส admin</a>' : 'ให้ผู้ดูแลเปิดหมวดผู้ใช้งานในหน้าตั้งค่า แล้วเปลี่ยนรหัส admin'} ก่อนใช้ข้อมูลจริง</div>`;
+  if (ME.demo_mode) banners.innerHTML += `<div class="banner amber">🧪 ชุดทดลองสำหรับฝึกใช้งาน — ห้ามกรอกข้อมูลคนไข้จริง ข้อมูลฝึกจะไม่ย้ายไปตัวจริง</div>`;
   if (ME.role === 'admin') api('GET', '/api/update/status').then(renderUpdateBanner).catch(() => {});
   api('GET', '/api/settings').then(s => {
     if (s.clinic_name) document.getElementById('brandName').textContent = s.clinic_name;
@@ -319,21 +343,40 @@ async function initPage(pageKey) {
 function renderBackupBanner(st) {
   const host = document.getElementById('backupBanner');
   if (!host) return;
+  const notices = [];
   if (st && !st.ok) {
-    host.innerHTML = `<div class="banner red">⚠️ ${st.age_hours == null ? 'ยังไม่เคยสำรองข้อมูลสำเร็จ' : 'ข้อมูลสำรองเก่ากว่า 1 วัน'} — ไปหน้า “รายงาน” แล้วกด “สำรองข้อมูลตอนนี้”</div>`;
+    notices.push(ME?.role === 'admin'
+      ? '<div class="banner red">ข้อมูลสำรองต้องตรวจสอบ — <a href="/admin.html?section=backup">เปิดหน้าสำรองและกู้ข้อมูล</a></div>'
+      : `<div class="banner red">⚠️ ${st.age_hours == null ? 'ยังไม่เคยสำรองข้อมูลสำเร็จ' : 'ข้อมูลสำรองเก่ากว่า 1 วัน'} — ไปหน้า “รายงาน” แล้วกด “สำรองข้อมูลตอนนี้”</div>`);
   } else if (st && st.coverage === 'local_only') {
-    host.innerHTML = `<div class="banner amber">⚠️ ข้อมูลสำรองยังอยู่ในคอมเครื่องนี้อย่างเดียว — เจ้าของคลินิกกรุณาไปหน้า “ตั้งค่า” เพื่อเก็บสำเนานอกเครื่อง</div>`;
-  } else if (st && st.cloud && !st.cloud_key_exported) {
-    host.innerHTML = `<div class="banner red">⚠️ ยังไม่มี USB สำหรับกู้ข้อมูลฉุกเฉิน — เจ้าของคลินิกกรุณาไปหน้า “ตั้งค่า” แล้วสร้าง Recovery Kit</div>`;
-  } else if (st && st.cloud && st.cloud.state === 'encrypted_to_sync_folder') {
-    host.innerHTML = `<div class="banner amber">☁️ ส่งสำเนาเข้าโฟลเดอร์คลาวด์แล้ว แต่ยังควรเปิด Google Drive/OneDrive ตรวจว่าส่งขึ้นเรียบร้อย</div>`;
-  } else host.innerHTML = '';
+    notices.push('<div class="banner amber">⚠️ ข้อมูลสำรองยังอยู่ในคอมเครื่องนี้อย่างเดียว — เจ้าของคลินิกกรุณาไปหน้า “ตั้งค่า” เพื่อเก็บสำเนานอกเครื่อง</div>');
+  }
+  // A cloud target proves only a copy into the local sync folder. Keep this
+  // limitation visible even when another warning (age or Kit) takes priority.
+  if (st && st.cloud) {
+    notices.push(`<div class="banner ${st.cloud.ok ? 'amber' : 'red'}">${esc(backupTargetText(st.cloud))}</div>`);
+    if (st.password_ready && !st.password_cloud_ready) notices.push('<div class="banner amber">ยังส่งไฟล์สำหรับรหัสสำรองล่าสุดไปโฟลเดอร์คลาวด์ไม่ครบ — กรุณากดสำรองข้อมูลตอนนี้ แล้วตรวจผลอีกครั้ง</div>');
+    if (!st.cloud_key_exported && !st.password_ready && ME?.role !== 'admin') {
+      notices.push('<div class="banner red">⚠️ ยังไม่ได้ตั้งรหัสสำหรับกู้บนเครื่องใหม่ — เจ้าของคลินิกกรุณาไปหน้า “ตั้งค่า” แล้วตั้งรหัสสำรองข้อมูล หรือสร้าง USB กู้ฉุกเฉิน</div>');
+    }
+  }
+  host.innerHTML = notices.join('');
 }
 
 function backupTargetText(t) {
-  const name = t.kind === 'local' ? 'สำเนาในเครื่อง' : t.kind === 'cloud_sync' ? 'สำเนาบนคลาวด์' : 'สำเนานอกเครื่อง';
-  const state = t.ok ? 'ตรวจแล้ว ใช้งานได้' : `ไม่สำเร็จ: ${t.error || 'กรุณาลองใหม่'}`;
+  const name = t.kind === 'local' ? 'สำเนาในเครื่อง' : t.kind === 'cloud_sync' ? 'โฟลเดอร์คลาวด์' : 'สำเนาในไดรฟ์/โฟลเดอร์ที่ตั้งไว้';
+  if (t.ok && t.kind === 'cloud_sync') {
+    return '☁️ โฟลเดอร์คลาวด์: คัดลอกและตรวจไฟล์ในโฟลเดอร์แล้ว — ยังไม่ยืนยันการอัปโหลด กรุณาเปิด Google Drive/OneDrive ตรวจว่าไฟล์สำรองชุดล่าสุดอัปโหลดครบแล้ว';
+  }
+  const state = t.ok ? 'คัดลอกและตรวจความครบของไฟล์แล้ว' : `ไม่สำเร็จ: ${t.error || 'กรุณาลองใหม่'}`;
   return `${t.ok ? '✅' : '❌'} ${name}: ${state}`;
+}
+
+function backupRunToastText(result) {
+  if (!result.ok) return 'สำรองข้อมูลบางตำแหน่งไม่สำเร็จ ดูรายละเอียดด้านล่าง';
+  return (result.targets || []).some(t => t.kind === 'cloud_sync' && t.ok)
+    ? 'คัดลอกสำเนาแล้ว — ยังไม่ยืนยันการอัปโหลดคลาวด์'
+    : 'คัดลอกสำเนาและตรวจความครบของไฟล์แล้ว';
 }
 
 function backupRunResultText(result) {

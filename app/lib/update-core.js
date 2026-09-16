@@ -275,6 +275,8 @@ function applyFileTransaction(options) {
     const source = path.join(stagedApp, ...item.path.split('/'));
     const target = path.join(appRoot, ...item.path.split('/'));
     const rollback = path.join(rollbackRoot, ...item.path.split('/'));
+    // Leave byte-identical files in place, including the runtime used by a maintenance helper.
+    if (fs.existsSync(target) && !fs.lstatSync(target).isSymbolicLink() && fs.statSync(target).size === item.bytes && sha256(target) === item.sha256) continue;
     const record = { path: item.path, old_moved: false, new_published: false };
     journal.files.push(record); atomicWriteJson(journalFile, journal);
     if (fs.existsSync(target)) { retryRenameSync(target, rollback); record.old_moved = true; atomicWriteJson(journalFile, journal); }

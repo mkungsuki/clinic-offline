@@ -1,10 +1,11 @@
 <!doctype html>
-<html lang="th">
+<html lang="th" class="role-routing">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ห้องตรวจ</title>
 <link rel="stylesheet" href="/app.css">
+<link rel="stylesheet" href="/queue-notices.css">
 <style>
   /* ---------- หน้าคิว: แถวใหญ่ กดง่าย ---------- */
   #viewQueue { max-width: 860px; margin: 0 auto; padding: 12px; }
@@ -111,6 +112,7 @@
   .cert-dialog input, .cert-dialog textarea, .cert-dialog select { font-size:14px; text-align:left; letter-spacing:normal; }
   .cert-check { display:flex; align-items:center; gap:7px; padding:5px 0; }
   .cert-check input { width:auto; }
+.preferred-other{background:var(--bg);border-style:dashed}
 </style>
 </head>
 <body>
@@ -260,6 +262,8 @@
 </div>
 
 <script src="/common.js"></script>
+<script src="/dose-template.js"></script>
+<script src="/queue-notices.js"></script>
 <script src="/remed.js"></script>
 <script>
 'use strict';
@@ -297,8 +301,11 @@ function renderQueue(queue, force = false) {
   document.getElementById('waitBadge').textContent = waiting.length ? `(รออีก ${waiting.length})` : '';
 
   let html = '';
-  for (const v of inExam) html += bigRow(v, `<button class="btn primary" onclick="openVisit(${v.id})">เปิดต่อ</button>`, 'กำลังตรวจค้างอยู่');
-  for (const v of waiting) html += bigRow(v, `<button class="btn green" onclick="callPatient(${v.id})">📢 เรียกตรวจ</button>`);
+  for (const v of inExam) html += bigRow(v, v.doctor_id===ME.user_id ? `<button class="btn primary" onclick="openVisit(${v.id})">เปิดต่อ</button>` : '', 'กำลังตรวจค้างอยู่' + (multipleDoctors()&&v.doctor_name?' · '+esc(v.doctor_name):''));
+  const waitingRow=v=>bigRow(v, `<button class="btn green" onclick="callPatient(${v.id})">📢 เรียกตรวจ</button>`, multipleDoctors()&&v.preferred_doctor_name?esc('รอ '+v.preferred_doctor_name):'');
+  if(multipleDoctors()){
+    for(const group of QueueNotices.groups(queue,ME.user_id))if(group.rows.length)html+=`<h3 class="doctor-queue-group" data-queue-group="${group.id}">${group.title} <small>(${group.rows.length})</small></h3>`+group.rows.map(waitingRow).join('');
+  }else html+=waiting.map(waitingRow).join('');
   html = html || '<div class="muted" style="text-align:center;padding:30px 0;font-size:16px">— ไม่มีคิวรอตรวจ —</div>';
   const doneHtml = done.map(v => `<div class="qrow">
     <div class="qno">${v.queue_no}</div>
@@ -321,7 +328,7 @@ function bigRow(v, action, tag = '') {
   if (v.temp_c) vs.push(`<span class="${v.temp_c >= 37.8 ? 'vwarn' : ''}">${v.temp_c}°C</span>`);
   if (v.pulse) vs.push(`<span class="${v.pulse >= 110 ? 'vwarn' : ''}">P ${v.pulse}</span>`);
   if (v.glucose) vs.push(`<span class="${v.glucose >= 126 ? 'vwarn' : ''}">DTX ${v.glucose}</span>`);
-  return `<div class="bigq">
+  return `<div class="bigq${multipleDoctors()&&v.state==='WAITING'&&v.preferred_doctor_id&&v.preferred_doctor_id!==ME.user_id?' preferred-other':''}">
     <div class="qno">${v.queue_no}</div>
     <div style="flex:1"><div class="nm">${esc(v.prefix || '')}${esc(v.first_name)} ${esc(v.last_name || '')}
       ${tag ? `<span class="chip st-IN_EXAM">${tag}</span>` : ''}</div>
@@ -329,9 +336,29 @@ function bigRow(v, action, tag = '') {
       ${v.cc ? `<div class="sub">💬 ${esc(v.cc)}</div>` : ''}</div>
     ${action}</div>`;
 }
-async function callPatient(id) {
-  try { await api('POST', `/api/visits/${id}/call`); await openVisit(id); }
-  catch (e) { toast(e.message, true); }
+let pendingCall=null;
+function callResult(message,retry,retryAction=()=>callPatient(pendingCall.id)){
+  let box=document.getElementById('callRequestResult');
+  if(!box){box=document.createElement('div');box.id='callRequestResult';box.className='call-request-result';const bar=document.querySelector('.topbar');if(bar)bar.after(box);else document.body.prepend(box);}
+  box.replaceChildren(document.createTextNode(message));
+  if(retry){const button=document.createElement('button');button.className='btn';button.textContent='ตรวจผล / ส่งรายการเดิมอีกครั้ง';button.onclick=retryAction;box.appendChild(button);}
+}
+async function callPatient(id){
+  if(pendingCall?.busy)return;
+  if(pendingCall&&pendingCall.id!==id){callResult('ยังรอผลเรียกคิวก่อนหน้า กรุณาตรวจผลก่อนเลือกคนใหม่',true);return;}
+  if(!pendingCall)pendingCall={id,body:{op_id:crypto.randomUUID()},busy:false};
+  const attempt=pendingCall;attempt.busy=true;
+  try{
+    await api('POST',`/api/visits/${id}/call`,attempt.body);
+    const current=await api('GET',`/api/visits/${id}`);
+    pendingCall=null;
+    if(current.state!=='IN_EXAM'||current.doctor_id!==ME.user_id){callResult('คิวนี้เปลี่ยนสถานะแล้ว กรุณาดูคิวล่าสุดก่อนเรียกคนไข้',false);await refresh();return;}
+    await openVisit(id);document.getElementById('callRequestResult')?.remove();
+  }catch(e){
+    if(e.status&&e.status<500){pendingCall=null;callResult(e.message,false);await refresh().catch(()=>{});}
+    else{pendingCall=attempt;callResult('ยังยืนยันผลเรียกคิวไม่ได้ กรุณาตรวจผลเดิมก่อนเรียกคนใหม่',true);}
+    toast(e.message,true);
+  }finally{attempt.busy=false;}
 }
 
 // ================= เปิด visit → หน้าตรวจ =================
@@ -339,6 +366,7 @@ async function openVisit(id) {
   if (cur && draftDirty) await pushDraft().catch(() => {});
   allergyAckSig = null; // เปลี่ยนคนไข้/เปิด visit ใหม่ ต้องยืนยันแพ้ยาใหม่เสมอ
   cur = await api('GET', `/api/visits/${id}`);
+  previousAppointment = null;
   showView('exam');
   renderPatientHead();
   loadHistory(cur.hn);
@@ -500,7 +528,7 @@ function setSaveState(t) { document.getElementById('saveState').textContent = t;
 N_FIELDS.forEach(id => document.getElementById(id).addEventListener('input', () => { draftDirty = true; }));
 
 async function pushDraft() {
-  if (!cur || cur.state !== 'IN_EXAM') return;
+  if (!cur || cur.state !== 'IN_EXAM' || pendingFinish) return;
   await api('PUT', `/api/visits/${cur.id}/draft`, { ...getNote(), lines });
   draftDirty = false;
   setSaveState('บันทึกร่างแล้ว ' + new Date().toLocaleTimeString('th-TH'));
@@ -615,6 +643,7 @@ function doseTotalQty(dose) {
   return per > 0 && days > 0 ? Math.ceil(per * days) : 0;
 }
 function doseText(dose, unit) {
+  if (Object.hasOwn(dose, 'additional_instructions')) return DoseTemplate.text(dose, unit);
   const u = unit || 'เม็ด';
   const mode = dose.mode || 'standard';
   if (mode === 'exact_times') {
@@ -658,7 +687,7 @@ function updDose(i, k, v) {
 function setDoseMode(i, mode) {
   const l = lines[i];
   l.dose = { ...defaultDose(mode), ...(l.dose || {}), mode };
-  if (mode === 'exact_times' && !(l.dose.times || []).length) l.dose.times = [{ time: '06:00', amount: 1 }];
+  if (mode === 'exact_times' && !(l.dose.times || []).length) l.dose.times = [{ time: '', amount: '' }];
   l._expanded = true;
   recomputeLine(l); draftDirty = true; renderOrder();
 }
@@ -671,7 +700,7 @@ function addDoseTime(i) {
   const d = lines[i].dose;
   if ((d.times || []).length >= 8) { toast('รุ่นนี้รองรับไม่เกิน 8 เวลาต่อวัน หากซับซ้อนกว่านี้ใช้ “คำสั่งพิเศษ”', true); return; }
   d.times = d.times || [];
-  d.times.push({ time: '', amount: 1 }); lines[i]._expanded = true; draftDirty = true; renderOrder();
+  d.times.push({ time: '', amount: '' }); lines[i]._expanded = true; draftDirty = true; renderOrder();
 }
 function rmDoseTime(i, j) { lines[i].dose.times.splice(j, 1); recomputeLine(lines[i]); draftDirty = true; renderOrder(); }
 function toggleDose(i) { lines[i]._expanded = !lines[i]._expanded; renderOrder(); }
@@ -681,6 +710,10 @@ function updDrugQty(i, v) {
 }
 function useCalculatedQty(i) {
   const l = lines[i]; if (!l.dose) return; l.dose.qty_source = 'calculated'; recomputeLine(l); draftDirty = true; renderOrder();
+}
+function useCalculatedInstructions(i) {
+  const l=lines[i]; if(!l.dose)return;
+  l.dose.instructions_source='calculated'; recomputeLine(l); draftDirty=true; renderOrder();
 }
 function updField(i, k, v) {
   lines[i][k] = k === 'instructions' || k === 'name' ? v : (Number(v) || 0);
@@ -793,6 +826,7 @@ function renderOrder() {
       editor = `<div class="dose-editor"><div class="dose-mode">
         ${[['standard','เวลามาตรฐาน'],['exact_times','ระบุเวลา'],['prn','เมื่อมีอาการ'],['manual','คำสั่งพิเศษ']].map(x => `<button class="btn ${d.mode === x[0] ? 'on' : ''}" onclick="setDoseMode(${i},'${x[0]}')">${x[1]}</button>`).join('')}</div>
         ${fields}<div class="oinstr"><input type="text" value="${esc(l.instructions || '')}" placeholder="วิธีใช้ / คำสั่งพิเศษ" onchange="updField(${i},'instructions',this.value)"></div>
+        ${d.instructions_source==='manual' && d.mode!=='manual' ? `<div class="dose-text-review" role="status">วิธีใช้เป็นข้อความเดิมหรือพิมพ์เอง กรุณาทวนให้ตรงกับตาราง${dosePerDay(d)>0 || (d.mode==='prn' && +d.prn_amount>0) ? `<button class="btn sm" onclick="useCalculatedInstructions(${i})">ใช้วิธีใช้จากตารางแทนข้อความนี้</button>` : ''}</div>` : ''}
         <div class="qty-override"><span>จำนวนจ่ายจริง</span><input type="number" min="0.25" step="0.25" value="${l.qty}" style="width:68px;text-align:center;padding:5px" onchange="updDrugQty(${i},this.value)"><span>${esc(l.unit || '')}</span>
           ${calc ? `<span class="muted">สูตร ${calc}</span>${d.qty_source === 'manual' ? `<button class="btn sm" onclick="useCalculatedQty(${i})">ใช้ตามสูตร</button>` : ''}` : ''}</div></div>`;
     }
@@ -803,6 +837,7 @@ function renderOrder() {
       <button class="btn sm" onclick="toggleDose(${i})">${expanded ? 'ปิด' : 'แก้ไข'}</button>
       <button class="btn sm ghost-red" onclick="rmLine(${i})">×</button></div>
       <div class="drug-summary ${l.instructions ? '' : 'empty'}" onclick="toggleDose(${i})">${esc(l.instructions || 'ยังไม่ระบุวิธีใช้ — กดแก้ไข')}</div>
+      ${['standard','exact_times'].includes(d.mode) && dosePerDay(d)<=0 ? '<div class="dose-missing" role="status">ยังไม่มีตารางขนาดยา ระบบไม่แปลงวิธีใช้ข้อความเป็นตัวเลข — กดแก้ไขแล้วใส่ขนาดก่อนคำนวณวันยา</div>' : ''}
       ${editor}
       <div class="osum">จำนวน <input type="number" min="0.25" step="0.25" value="${l.qty}"
           style="width:62px;text-align:center;padding:4px" onchange="updDrugQty(${i},this.value)"
@@ -834,34 +869,14 @@ function addDiscountConfirm() {
   renderOrder();
   closeModal();
 }
-// แปลงวิธีใช้แบบข้อความ → ขนาดกินแบบตัวเลข (UAT รอบ 2: ยาเก่าๆ เก็บวิธีใช้เป็นประโยค ระบบคูณไม่ได้)
-// best-effort เฉพาะแพทเทิร์นชัดเจน: "ครั้งละ X ... วันละ N ครั้ง / มื้อระบุตรงๆ" — PRN/ยาใช้ภายนอกไม่เดาเด็ดขาด
-// ข้อความที่บอกว่าเป็นยาตามอาการ/ยาใช้เฉพาะ — ห้ามเดาลงกริด และ "ตั้งวันยา" ต้องข้ามเงียบๆ ไม่ใช่เตือน
-const PRN_TEXT_RE = /ทุก\s*\d|เวลาปวด|เวลามี|เมื่อมีอาการ|มีไข้|เวลาหอบ|เวียนหัว|พ่น|หยอด|ทา\s|ทาบริเวณ|จิบ|ละลายน้ำ/;
-function parseDoseFromText(text) {
-  const t = String(text || '').trim();
-  if (!t) return null;
-  if (PRN_TEXT_RE.test(t)) return null;
-  let amount = 0;
-  const amountMatch = t.match(/ครั้งละ\s*(\d+(?:\.\d+)?)/);
-  if (amountMatch) amount = parseFloat(amountMatch[1]);
-  else if (/ครั้งละ\s*ครึ่ง/.test(t)) amount = 0.5;
-  if (!amount) return null;
-  const dose = { m: 0, n: 0, e: 0, b: 0 };
-  if (/เช้า/.test(t)) dose.m = amount;
-  if (/เที่ยง|กลางวัน/.test(t)) dose.n = amount;
-  if (/เย็น/.test(t)) dose.e = amount;
-  if (/ก่อนนอน/.test(t)) dose.b = amount;
-  if (!(dose.m || dose.n || dose.e || dose.b)) {
-    const perDay = (t.match(/วันละ\s*(\d)\s*ครั้ง/) || [])[1];
-    if (perDay === '1') dose.m = amount;
-    else if (perDay === '2') { dose.m = amount; dose.e = amount; }
-    else if (perDay === '3') { dose.m = amount; dose.n = amount; dose.e = amount; }
-    else if (perDay === '4') { dose.m = amount; dose.n = amount; dose.e = amount; dose.b = amount; }
-    else return null;
-  }
-  const timingMatch = t.match(/(ก่อนอาหาร|หลังอาหาร|พร้อมอาหาร)/);
-  return { m: dose.m, n: dose.n, e: dose.e, b: dose.b, ...(timingMatch ? { timing: timingMatch[1] } : {}) };
+// Numeric defaults are stored by the stock editor. Never infer dosage from prose.
+function newDrugLine(it) {
+  const template=DoseTemplate.read(it),dose=template?structuredClone(template):defaultDose(it.dose_mode||'standard');
+  if(!template && it.default_instructions) dose.instructions_source='manual';
+  const l={type:'drug',ref_id:it.id,name:it.name,qty:1,unit:it.unit,price_each:it.price,
+    dose,instructions:template?DoseTemplate.text(template,it.unit):(it.default_instructions||''),_expanded:true};
+  if(template)recomputeLine(l);
+  return l;
 }
 
 // ตั้งจำนวนวันให้ยาทุกตัวในบิล (UAT A3) — คำนวณได้เฉพาะยาที่ใส่ขนาดกินแล้ว
@@ -876,14 +891,7 @@ function applyDaysAll() {
     if (l.type !== 'drug') continue;
     l.dose = { ...defaultDose(), ...(l.dose || {}) };
     if (!['standard', 'exact_times'].includes(l.dose.mode || 'standard')) { prnSkipped.push(l.name); continue; }
-    // กริดยังว่าง → ลองแปลงจากวิธีใช้แบบข้อความก่อน ("ครั้งละ 1 วันละ 3 ครั้ง" → เช้า/เที่ยง/เย็น)
-    if (dosePerDay(l.dose) <= 0 && (l.dose.mode || 'standard') === 'standard') {
-      const parsed = parseDoseFromText(l.instructions);
-      if (parsed) Object.assign(l.dose, parsed);
-    }
     if (dosePerDay(l.dose) <= 0) {
-      // วิธีใช้บอกอยู่แล้วว่าเป็นยาตามอาการ/ยาใช้เฉพาะ → ข้ามเงียบๆ ไม่เตือน ไม่กางช่อง (UAT รอบ 2)
-      if (PRN_TEXT_RE.test(l.instructions || '')) { prnSkipped.push(l.name); continue; }
       l._expanded = true;
       missing.push(l.name);
       continue;
@@ -907,16 +915,7 @@ attachSearch(document.getElementById('orderAdd'),
   it => `<b>${esc(it.name)}</b> <span class="sub">${it.type === 'drug' ? 'ยา · เหลือ ' + it.qty_on_hand : 'บริการ'} · ${baht(it.price)} บ.</span>`,
   it => {
     if (it.type === 'drug') {
-      const mode = it.dose_mode || 'standard';
-      const dose = defaultDose(mode);
-      if (mode === 'exact_times') dose.times = [{ time: '06:00', amount: 1 }];
-      // เติมกริดขนาดกินจากวิธีใช้ข้อความให้เลยถ้าแพทเทิร์นชัด — "ตั้งวันยา" จะคำนวณได้ทันที
-      if (mode === 'standard') {
-        const parsed = parseDoseFromText(it.default_instructions);
-        if (parsed) Object.assign(dose, parsed);
-      }
-      lines.push({ type: 'drug', ref_id: it.id, name: it.name, qty: 1, unit: it.unit, price_each: it.price,
-        dose, instructions: it.default_instructions || '', _expanded: false });
+      lines.push(newDrugLine(it));
       const hit = allergySubstanceFor(it.name);
       if (hit) toast(`⚠️ คนไข้มีประวัติแพ้ ${hit} — ${it.name} อยู่ในข่าย ตรวจสอบก่อนจ่าย`, true);
     } else {
@@ -1022,6 +1021,8 @@ async function updateApptCrowd() {
   const wd = TH_WEEKDAY[new Date(dateStr + 'T00:00:00').getDay()];
   host.innerHTML = `📅 ${wd} ${thDate(dateStr)} — <b>${crowdLabel(count)}</b>${count >= 1 ? ' <span class="muted">(ดูรายชื่อในหน้า "นัดหมาย")</span>' : ''}`;
 }
+let previousAppointment = null;
+function changeAppointment() { previousAppointment=cur.appointment; cur.appointment=null; renderAppt(); }
 function renderAppt() {
   const card = document.getElementById('apptCard');
   const host = document.getElementById('apptBody');
@@ -1030,11 +1031,11 @@ function renderAppt() {
   if (a) {
     host.innerHTML = `<div><b>${thDate(a.appt_date)}</b> <span class="muted">(อีก ${a.days} วัน)</span>
       <span class="muted" id="apptExistCrowd"></span>
-      ${a.note ? '<div class="muted">' + esc(a.note) + '</div>' : ''}</div>
+      ${doctorChip(a)}${a.note ? '<div class="muted">' + esc(a.note) + '</div>' : ''}</div>
       ${cur.state === 'IN_EXAM' ? `<button class="btn primary" onclick="calculateMedsToAppointment()">🧮 คำนวณยาถึงวันนัด ${a.days} วัน</button>` : ''}
       <div class="row">
         <button class="btn sm" onclick="openPrintWindow('/print/appointment/${a.id}','เปิดใบนัด')">${stationHasPrinter() ? '🖨️ พิมพ์ใบนัด' : '👁️ ดูตัวอย่างใบนัด'}</button>
-        <button class="btn sm" onclick="cur.appointment=null;renderAppt()">เปลี่ยนนัด</button>
+        <button class="btn sm" onclick="changeAppointment()">เปลี่ยนนัด</button>
         <button class="btn sm ghost-red" onclick="cancelAppt(${a.id})">ยกเลิกนัด</button>
       </div>`;
     apptCountFor(a.appt_date).then(count => {
@@ -1043,7 +1044,7 @@ function renderAppt() {
     });
     return;
   }
-  host.innerHTML = `<div class="row">
+  host.innerHTML = `${doctorSelect('apptDoctor',previousAppointment?.hn===cur.hn?(previousAppointment.doctor_id??cur.doctor_id??ME.user_id):(cur.doctor_id||ME.user_id))}<div class="row">
       <button class="btn" id="apptQ7" onclick="setAppt(7)">7 วัน</button>
       <button class="btn" id="apptQ14" onclick="setAppt(14)">14 วัน</button>
       <button class="btn" id="apptQ30" onclick="setAppt(30)">1 เดือน</button>
@@ -1058,17 +1059,55 @@ function renderAppt() {
     <input type="text" id="apptNote" placeholder="หมายเหตุนัด (เช่น เจาะ FBS ก่อนพบแพทย์)">`;
   decorateApptButtons();
 }
+// Appointment retries keep one immutable request even if the doctor switches patient.
+let pendingExamAppointment = null;
+function examAppointmentNotice(message, retry = false) {
+  let el = document.getElementById('apptWriteResult');
+  if (!el) { el = document.createElement('div'); el.id = 'apptWriteResult'; el.className = 'card'; el.setAttribute('role','status'); el.style.margin='12px'; el.style.scrollMarginTop='calc(var(--topbar-h,60px) + 12px)'; document.querySelector('.topbar').after(el); }
+  el.innerHTML = '<b>' + esc(message) + '</b> <a class="btn" href="/calendar.html">เปิดปฏิทิน / ตรวจประวัตินัด</a>' + (retry ? '<button class="btn primary" onclick="sendExamAppointment()">ส่งรายการเดิมอีกครั้ง</button>' : '');
+  el.scrollIntoView({block:'start'});
+}
+function examAppointmentMarker(p) {
+  try { const key = 'clinic_appt_pending_' + ME.user_id; if (p) sessionStorage.setItem(key, JSON.stringify({id:p.id,op_id:p.body.op_id})); else sessionStorage.removeItem(key); } catch {}
+}
+async function restoreExamAppointmentNotice() {
+  let p; try { p = JSON.parse(sessionStorage.getItem('clinic_appt_pending_' + ME.user_id) || 'null'); } catch {}
+  if (!p) return;
+  try { const s = await api('GET','/api/appointment-operations/' + encodeURIComponent(p.op_id));
+    examAppointmentNotice(s.known ? 'บันทึกนัดครั้งก่อนสำเร็จแล้ว — เปิดประวัติเพื่อตรวจผล' : 'มีรายการนัดครั้งก่อนที่ต้องตรวจผล — เปิดปฏิทินก่อนบันทึกต่อ'); examAppointmentMarker(null);
+  } catch { examAppointmentNotice('ยังตรวจผลนัดครั้งก่อนไม่ได้ — เปิดปฏิทินเมื่อเชื่อมต่อได้'); }
+}
+async function sendExamAppointment() {
+  const p = pendingExamAppointment; if (!p || p.sending) return; p.sending = true;
+  const finish = a => {
+    pendingExamAppointment = null; examAppointmentMarker(null); clearApptCounts();
+    if (cur && cur.id === p.visitId) { cur.appointment = a.cancelled ? null : a; renderAppt(); }
+    const message = (a.cancelled ? 'ยกเลิกนัดแล้ว' : 'นัดแล้ว ' + thDate(a.appt_date));
+    examAppointmentNotice(message); toast(message);
+  };
+  try { finish(await api('POST',p.url,p.body)); }
+  catch (e) {
+    if (e.data?.already_saved) { finish(e.data.already_saved); return; }
+    if (e.data?.replace_appointment) {
+      p.sending=false;
+      if (confirm(e.message)) { p.body={...p.body,confirm_replace:true,replace_revision:e.data.replace_appointment.revision}; await sendExamAppointment(); }
+      else { pendingExamAppointment=null; examAppointmentMarker(null); examAppointmentNotice('ยังไม่ได้เปลี่ยนนัด — นัดเดิมยังอยู่'); }
+      return;
+    }
+    if (e.status && e.status < 500) { pendingExamAppointment = null; examAppointmentMarker(null); examAppointmentNotice(e.message); }
+    else { p.sending = false; examAppointmentNotice('ยังไม่ได้รับผลนัด — ส่งรายการเดิมอีกครั้งได้ กรุณาตรวจผลก่อนตั้งนัดอื่น',true); }
+    toast(e.message,true);
+  }
+}
 async function setAppt(days, date) {
   if (!cur) return;
-  try {
-    const note = document.getElementById('apptNote') ? document.getElementById('apptNote').value : '';
-    const a = await api('POST', `/api/visits/${cur.id}/appointment`, { days, date, note });
-    cur.appointment = a;
-    clearApptCounts(); // นัดใหม่เพิ่งเข้า — นับใหม่รอบหน้า
-    toast(`นัดแล้ว ${thDate(a.appt_date)}`);
-    renderAppt();
-  } catch (e) { toast(e.message, true); }
+  if(pendingExamAppointment && pendingExamAppointment.visitId!==cur.id){examAppointmentNotice('ยังรอผลนัดคนไข้รายก่อน กรุณาส่งรายการเดิมอีกครั้งก่อนตั้งนัดรายนี้',true);return;}
+  if (pendingExamAppointment) { await sendExamAppointment(); return; }
+  const note = document.getElementById('apptNote')?.value || '';
+  pendingExamAppointment = {id:cur.appointment?.id || null,visitId:cur.id,url:'/api/visits/' + cur.id + '/appointment',body:{days,date,note,...chosenDoctor('apptDoctor'),op_id:crypto.randomUUID()}};
+  examAppointmentMarker(pendingExamAppointment); await sendExamAppointment();
 }
+window.addEventListener('beforeunload', e => { if (pendingExamAppointment) { e.preventDefault(); e.returnValue = ''; } });
 function calculateMedsToAppointment() {
   const days = cur && cur.appointment && Number(cur.appointment.days);
   if (!days) return;
@@ -1080,7 +1119,7 @@ function calculateMedsToAppointment() {
     const q = Math.ceil(dosePerDay(l.dose) * days);
     return `• ${l.name}: ${q} ${l.unit || ''}${l.dose.qty_source === 'manual' ? ` (จ่ายจริงที่แก้ไว้ ${l.qty} จะยังไม่ถูกทับ)` : ''}`;
   }).join('\n');
-  const skipText = skipped.length ? `\n\nข้าม ${skipped.length} รายการ PRN/คำสั่งพิเศษ` : '';
+  const skipText = skipped.length ? `\n\nข้าม ${skipped.length} รายการที่ไม่มีตารางคำนวณ (รวมยาตามอาการ/คำสั่งพิเศษ)` : '';
   if (!confirm(`คำนวณยาถึงวันนัด ${days} วัน\n\n${preview}${skipText}\n\nยืนยันใช้จำนวนวันนี้?`)) return;
   for (const l of eligible) { l.dose.days = days; recomputeLine(l); }
   draftDirty = true; renderOrder();
@@ -1093,13 +1132,15 @@ function setApptCustom() {
   setAppt(days || undefined, date || undefined);
 }
 async function cancelAppt(id) {
+  if(pendingExamAppointment && pendingExamAppointment.visitId!==cur?.id){examAppointmentNotice('ยังรอผลนัดคนไข้รายก่อน กรุณาส่งรายการเดิมอีกครั้งก่อนยกเลิกนัดรายนี้',true);return;}
+  if (pendingExamAppointment) { await sendExamAppointment(); return; }
   if (!confirm('ยกเลิกนัดนี้?')) return;
   try {
-    await api('POST', `/api/appointments/${id}/cancel`, {});
-    cur.appointment = null;
-    toast('ยกเลิกนัดแล้ว');
-    renderAppt();
-  } catch (e) { toast(e.message, true); }
+    const a = (await api('GET','/api/appointments/' + id + '/history')).appointment;
+    if (pendingExamAppointment) return;
+    pendingExamAppointment = {id,visitId:a.visit_id,url:'/api/appointments/' + id + '/cancel',body:{op_id:crypto.randomUUID(),expected_event_id:a.last_event_id,expected_date:a.appt_date}};
+    examAppointmentMarker(pendingExamAppointment); await sendExamAppointment();
+  } catch (e) { toast(e.message,true); }
 }
 
 // ================= fav sets (ยาชุด) =================
@@ -1149,9 +1190,9 @@ function renderFavBuilder() {
     ${fbLines.map((l, i) => `<div class="mgr-row">
       <span class="nm"><b>${esc(l.name)}</b> <span class="muted">฿${baht(l.price_each)}/${esc(l.unit || 'หน่วย')}</span><br>
         <input value="${esc(l.instructions || '')}" placeholder="วิธีใช้ (แก้ได้อีกทีตอนสั่งจริง)" style="width:100%;font-size:12.5px;padding:4px 6px"
-          onchange="fbKeepName();fbLines[${i}].instructions=this.value"></span>
+          onchange="fbKeepName();fbLines[${i}].instructions=this.value;if(fbLines[${i}].dose)fbLines[${i}].dose.instructions_source='manual'"></span>
       <span>×</span><input type="number" min="0.25" step="0.25" value="${l.qty}" style="width:60px;text-align:center"
-        onchange="fbKeepName();fbLines[${i}].qty=Number(this.value)||1">
+        onchange="fbKeepName();fbLines[${i}].qty=Number(this.value)||1;if(fbLines[${i}].dose)fbLines[${i}].dose.qty_source='manual'">
       <button class="btn sm ghost-red" onclick="fbKeepName();fbLines.splice(${i},1);renderFavBuilder()">×</button>
     </div>`).join('') || '<div class="muted">ยังไม่มีรายการ — ค้นหาด้านบนเพื่อเพิ่ม</div>'}
     <div class="row" style="margin-top:12px">
@@ -1163,8 +1204,7 @@ function renderFavBuilder() {
     it => {
       fbKeepName();
       fbLines.push(it.type === 'drug'
-        ? { type: 'drug', ref_id: it.id, name: it.name, qty: 1, unit: it.unit, price_each: it.price,
-            dose: defaultDose(it.dose_mode || 'standard'), instructions: it.default_instructions || '' }
+        ? newDrugLine(it)
         : { type: 'service', ref_id: it.id, name: it.name, qty: 1, unit: 'ครั้ง', price_each: it.price,
             default_price: it.price, instructions: '' });
       renderFavBuilder();
@@ -1263,33 +1303,65 @@ function openFinishSummary(hits) {
     <div style="margin-top:4px">📅 ${a ? `นัดครั้งหน้า <b>${thDate(a.appt_date)}</b> (อีก ${a.days} วัน)${a.note ? ' — ' + esc(a.note) : ''}` : '<span class="muted">ไม่ได้ตั้งนัด</span>'}</div>
     ${hits.length ? `<div style="margin-top:6px;color:#b45309"><b>⚠ แพทย์รับทราบแล้ว:</b> ${hits.map(h => `แพ้ ${esc(h.substance)} → ${esc(h.drug)}`).join(' · ')}</div>` : ''}
     <div class="row" style="margin-top:14px">
-      <button class="btn green big" id="btnConfirmFinish" onclick="doFinishExam()">✅ ยืนยันจบตรวจ → ส่งจ่ายยา</button>
+      <button class="btn green big" id="btnConfirmFinish" onclick="doFinishExam()">${ME.can_front_desk ? '✅ ยืนยันจบตรวจ → ไปเก็บเงิน' : '✅ ยืนยันจบตรวจ → ส่งจ่ายยา'}</button>
       <button class="btn" onclick="closeModal()">กลับไปแก้</button></div>`);
   document.getElementById('btnConfirmFinish').focus();
 }
-async function doFinishExam() {
-  const hits = allergyHits();
-  closeModal();
-  try {
-    document.getElementById('btnFinish').disabled = true;
-    await api('POST', `/api/visits/${cur.id}/finish-exam`, {
-      note: getNote(), lines, base_version_id: cur.order ? cur.order.id : null,
-      allergy_ack: hits.length > 0,
-    });
-    draftDirty = false;
-    toast('✅ จบตรวจ — ส่งไปหน้าจ่ายยาแล้ว');
-    await backToQueue(); // กลับหน้าคิวรับคนต่อไปเลย
-  } catch (e) { toast(e.message, true); }
-  finally { document.getElementById('btnFinish').disabled = false; }
+let pendingFinish = null, finishBusy = false;
+function finishStorageKey() { return 'clinic_finish_' + ME.user_id; }
+function finishNotice(message, id, retry) {
+  let host = document.getElementById('finishResult');
+  if (!host) { host=document.createElement('div');host.id='finishResult';host.className='card';host.setAttribute('role','status');host.style.margin='12px';document.querySelector('.topbar').after(host); }
+  host.textContent=message + ' ';
+  const a=document.createElement('a');a.id='finishNext';a.className='btn primary';a.href=ME.can_front_desk ? '/?checkout='+id : '/';a.textContent=ME.can_front_desk ? 'ไปตรวจรายการและเก็บเงิน' : 'เปิดหน้าคลินิกดูสถานะคิว';host.append(a);
+  if(retry){const b=document.createElement('button');b.id='retryFinish';b.className='btn';b.textContent='ตรวจและยืนยันจบตรวจเดิม';b.onclick=()=>doFinishExam();host.append(b);}
 }
-async function requeue() {
-  if (!cur) return;
+function restoreFinish() {
+  try { const saved=JSON.parse(sessionStorage.getItem(finishStorageKey())||'null');
+    if(saved?.id&&saved?.body){pendingFinish=saved;finishNotice('มีรายการจบตรวจที่ยังไม่ได้รับคำตอบ ตรวจผลเดิมก่อนทำต่อ',saved.id,true);}
+    else if(saved?.done)finishNotice('บันทึกจบตรวจแล้ว',saved.done,false);
+  }catch{}
+}
+async function doFinishExam() {
+  if(finishBusy||(!cur&&!pendingFinish))return;
+  closeModal();finishBusy=true;
   try {
-    await pushDraft();
-    await api('POST', `/api/visits/${cur.id}/requeue`);
+    document.getElementById('btnFinish').disabled=true;
+    if(!pendingFinish){const hits=allergyHits();pendingFinish={id:cur.id,body:{op_id:crypto.randomUUID(),note:getNote(),lines:JSON.parse(JSON.stringify(lines)),base_version_id:cur.order?cur.order.id:null,allergy_ack:hits.length>0}};
+      // Stop before sending if the browser cannot retain the retry payload.
+      sessionStorage.setItem(finishStorageKey(),JSON.stringify(pendingFinish));}
+    const attempt=pendingFinish;
+    sessionStorage.setItem(finishStorageKey(),JSON.stringify(attempt));
+    const result=await api('POST','/api/visits/'+attempt.id+'/finish-exam',attempt.body);
+    pendingFinish=null;draftDirty=false;
+    sessionStorage.setItem(finishStorageKey(),JSON.stringify({done:attempt.id}));
+    finishNotice('บันทึกจบตรวจแล้ว ยังไม่ได้รับเงิน',attempt.id,false);
+    toast(ME.can_front_desk?'จบตรวจแล้ว — ตรวจยอดก่อนรับเงิน':'✅ จบตรวจ — ส่งไปหน้าจ่ายยาแล้ว');
+    if(ME.can_front_desk)location.href='/?checkout='+attempt.id;
+    else await backToQueue();
+  }catch(e){
+    if(e.status&&e.status<500&&e.status!==401){const id=pendingFinish?.id||cur?.id;pendingFinish=null;try{sessionStorage.removeItem(finishStorageKey());}catch{}finishNotice(e.message,id,false);}
+    else if(pendingFinish)finishNotice('ยังยืนยันผลไม่ได้: '+e.message+' การกดซ้ำจะตรวจรายการเดิม ไม่สร้างรายการเพิ่ม',pendingFinish.id,true);
+    toast(e.message,true);
+  }finally{finishBusy=false;document.getElementById('btnFinish').disabled=false;}
+}
+let pendingRequeue=null;
+async function requeue() {
+  if(pendingRequeue?.busy||(!cur&&!pendingRequeue))return;
+  let attempt=pendingRequeue;
+  try {
+    if(!attempt)attempt=pendingRequeue={id:cur.id,body:{op_id:crypto.randomUUID()},busy:false,draftSaved:false};
+    attempt.busy=true;
+    if(!attempt.draftSaved){await pushDraft();attempt.draftSaved=true;}
+    await api('POST', `/api/visits/${attempt.id}/requeue`,attempt.body);
+    pendingRequeue=null;document.getElementById('callRequestResult')?.remove();
     toast('คืนคิวแล้ว (ไปท้ายแถว)');
     await backToQueue();
-  } catch (e) { toast(e.message, true); }
+  } catch(e){
+    if(e.status&&e.status<500){pendingRequeue=null;callResult(e.message,false);}
+    else if(attempt)callResult('ยังยืนยันผลคืนคิวไม่ได้ กรุณาตรวจผลเดิมก่อนทำต่อ',true,()=>requeue());
+    toast(e.message,true);
+  }finally{if(attempt)attempt.busy=false;}
 }
 function localDateValue(d = new Date()) {
   const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
@@ -1601,6 +1673,7 @@ async function loadAcks() {
 // ================= poll: อัปเดตคิว ไม่แตะจอตรวจที่หมอพิมพ์อยู่ =================
 async function refresh() {
   const data = await api('GET', '/api/queue');
+  activeDoctors=data.doctors||activeDoctors;
   renderQueue(data.queue);
   renderBackupBanner(data.backup);
 }
@@ -1608,6 +1681,9 @@ initPage('exam').then(me => {
   if (!me) return;
   if (me.role !== 'doctor') { location.href = me.role === 'admin' ? '/admin.html' : '/'; return; }
   showView('queue');
+  if(me.can_front_desk)document.getElementById('btnFinish').textContent='✅ จบตรวจ → ไปเก็บเงิน';
+  restoreFinish();
+  restoreExamAppointmentNotice();
   renderStationPrinter();
   loadFavs();
   loadPresets();

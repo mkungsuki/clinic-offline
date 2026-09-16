@@ -1,11 +1,15 @@
 <!doctype html>
-<html lang="th">
+<html lang="th" class="role-routing">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>คลังยา</title>
 <link rel="stylesheet" href="/app.css">
 <style>
+  .drug-default-fields { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px; }
+  .drug-default-fields input,.drug-default-fields select { width:100%;min-width:0; }
+  .dose-time-default { display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:6px;align-items:end;margin-bottom:8px; }
+  #drugDosePreview { overflow-wrap:anywhere; }
   .cols { grid-template-columns: 1fr 380px; }
   @media (max-width: 1000px) { .cols { grid-template-columns: 1fr; } }
   .low { color: var(--red); font-weight: 700; }
@@ -13,6 +17,10 @@
   .expiring { color: #b45309; font-weight: 700; }
   .warn-days { font-size: 13px; font-weight: 400; color: #555; white-space: nowrap; }
   .warn-days input { width: 64px; }
+  .service-form { display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);gap:10px; }
+  .service-form input { width:100%;min-width:0; }
+  #serviceCard { scroll-margin-top:80px; }
+  @media(max-width:1100px) { .service-form { grid-template-columns:1fr; } }
 </style>
 </head>
 <body>
@@ -28,14 +36,19 @@
       <div id="expirySummary" class="muted" style="margin-bottom:6px"></div>
       <table class="t" id="drugTable"></table>
     </div>
-    <div class="card">
+    <div class="card" id="serviceCard">
       <h2>ค่าบริการ / หัตถการ</h2>
+      <p class="muted">ตั้งต้นทุนต่อครั้งครั้งเดียว ระบบหักให้ตอนเก็บเงิน เช่น วัสดุและค่าแรงที่จ่ายต่อครั้ง ไม่รวมยาที่คิดต้นทุนแยกในบิลแล้ว และไม่ใช่การตัดคลังวัสดุ</p>
+      <p class="muted">เว้นว่าง = ยังไม่ทราบทุน · ใส่ 0 เฉพาะรายการที่ไม่มีต้นทุนตรง · แก้ทุนแล้วใช้กับบิลใหม่ ไม่เปลี่ยนบิลเก่า</p>
+      <div id="serviceSaveStatus" role="status" aria-live="polite"></div>
+      <button class="btn hidden" id="retryServiceSave" onclick="retryServiceSave()">ตรวจผล / ส่งรายการเดิมอีกครั้ง</button>
       <table class="t" id="svcTable"></table>
-      <div class="row mt">
-        <input type="text" id="svcName" placeholder="ชื่อค่าบริการใหม่ เช่น ค่าตรวจ, ทำแผล">
-        <input type="number" id="svcPrice" placeholder="ราคา" style="max-width:110px">
-        <button class="btn primary" onclick="addService()">เพิ่ม</button>
+      <div class="service-form mt">
+        <label class="f"><span>ชื่อค่าบริการ</span><input type="text" id="svcName" maxlength="200" placeholder="เช่น ค่าตรวจ, ทำแผล"></label>
+        <label class="f"><span>ราคาขาย (บาท)</span><input type="number" id="svcPrice" min="0" step="0.01"></label>
+        <label class="f"><span>ต้นทุนต่อครั้ง (บาท)</span><input type="number" id="svcCost" min="0" step="0.01" placeholder="ยังไม่ทราบ"></label>
       </div>
+      <button class="btn primary mt" id="addServiceBtn" onclick="addService()">เพิ่มค่าบริการ</button>
     </div>
   </div>
 
@@ -56,13 +69,16 @@
           <label class="f"><span>จุดเตือนใกล้หมด</span><input type="number" id="d_reorder" value="10"></label>
         </div>
         <label class="f"><span>เตือนใกล้หมดอายุล่วงหน้าเฉพาะยานี้ (วัน — ว่าง = ค่ากลาง · วันหมดอายุกรอกเป็นราย lot ตอนรับเข้า)</span><input type="number" id="d_warn" min="1" max="3650" placeholder="ตาม supplier"></label>
-        <label class="f"><span>วิธีใช้ default (ขึ้นตอนสั่ง)</span><input type="text" id="d_instr" placeholder="เช่น ครั้งละ 1 เม็ด วันละ 3 ครั้ง หลังอาหาร"></label>
+        <label class="f"><span>คำแนะนำเพิ่มเติม / วิธีใช้เดิม</span><input type="text" id="d_instr" placeholder="คำแนะนำเพิ่มเติม — ตั้งขนาดยาในตารางด้านล่าง"></label>
         <label class="f"><span>รูปแบบสั่งยาเริ่มต้น</span><select id="d_dose_mode">
           <option value="standard">เวลามาตรฐาน — เช้า/เที่ยง/เย็น/ก่อนนอน</option>
           <option value="exact_times">ระบุเวลา — เช่น Levodopa</option>
           <option value="prn">เมื่อมีอาการ (PRN)</option>
           <option value="manual">คำสั่งพิเศษ / ระบุจำนวนเอง</option>
         </select></label>
+        <div id="drugDoseEditor"></div>
+        <div id="drugSaveStatus" role="status" aria-live="polite"></div>
+        <button class="btn hidden" id="retryDrugSave" onclick="retryDrugSave()">ตรวจผล / ส่งรายการยาเดิมอีกครั้ง</button>
         <div class="row">
           <button class="btn primary grow" onclick="saveDrug()">💾 บันทึก</button>
           <button class="btn" onclick="clearForm()">ล้าง</button>
@@ -81,6 +97,8 @@
 </div>
 
 <script src="/common.js"></script>
+<script src="/dose-template.js"></script>
+<script src="/dose-template-editor.js"></script>
 <script>
 'use strict';
 let drugs = [], services = [], warnDays = 90;
@@ -218,7 +236,7 @@ function render() {
         ${d.qty_on_hand <= d.reorder_level ? '⚠' : ''}${d.qty_on_hand < 0 ? '<div class="muted">ติดลบ — นับสต็อกด่วน</div>' : ''}</td>
       <td>${expiryCell(d)}</td>
       <td class="num money">${baht(d.price)}</td>
-      <td class="num money">${d.cost != null ? baht(d.cost) : '<span class="muted" title="ยังไม่ใส่ทุน — กำไรจะนับทุน 0">—</span>'}</td>
+      <td class="num money">${d.cost != null ? baht(d.cost) : '<span class="muted" title="ยังไม่ใส่ทุน — รายงานจะแสดงต้นทุนไม่ครบ">—</span>'}</td>
       <td>
         <button class="btn sm green" onclick="receive(${d.id})">+รับเข้า</button>
         <button class="btn sm" onclick="adjust(${d.id})">ปรับยอด</button>
@@ -226,9 +244,10 @@ function render() {
         <button class="btn sm" onclick="showMoves(${d.id})">ประวัติ</button>
       </td></tr>`).join('') || '<tr><td colspan="6" class="muted">ไม่มียา</td></tr>');
   document.getElementById('svcTable').innerHTML =
-    `<tr><th>รายการ</th><th class="num">ราคา</th><th></th></tr>` +
-    services.map(s => `<tr><td>${esc(s.name)}</td><td class="num money">${baht(s.price)}</td>
-      <td><button class="btn sm" onclick="editService(${s.id})">แก้ราคา</button></td></tr>`).join('');
+    `<tr><th>รายการ</th><th class="num">ราคาขาย</th><th class="num">ทุนต่อครั้ง</th><th></th></tr>` +
+    services.map(s => `<tr data-service-id="${s.id}"><td>${esc(s.name)}</td><td class="num money">${baht(s.price)}</td>
+      <td class="num money">${s.cost == null ? '<span class="danger">ยังไม่ใส่ทุน</span>' : baht(s.cost)}</td>
+      <td><button class="btn sm" onclick="editService(${s.id})">แก้ราคา / ทุน</button></td></tr>`).join('');
 }
 document.getElementById('filter').addEventListener('input', render);
 
@@ -284,8 +303,8 @@ function pickCatalogDrug(json) {
   document.getElementById('d_name').value = d.name;
   document.getElementById('d_generic').value = d.generic_name || '';
   document.getElementById('d_unit').value = d.unit || 'เม็ด';
-  document.getElementById('d_instr').value = d.default_instructions || '';
-  document.getElementById('d_dose_mode').value = d.dose_mode || 'standard';
+  document.getElementById('d_instr').value = DoseTemplate.read(d)?.additional_instructions ?? d.default_instructions ?? '';
+  resetStockDose(DoseTemplate.read(d), d.dose_mode || 'standard');
   closeModal();
   // พาสายตาไปที่ฟอร์ม (อยู่คอลัมน์ขวา — จอกว้างมากอาจมองไม่เห็นว่าถูกเติมแล้ว)
   const card = document.getElementById('formTitle').closest('.card');
@@ -367,17 +386,19 @@ function editDrug(id) {
   document.getElementById('d_cost').value = d.cost != null ? d.cost : '';
   document.getElementById('d_reorder').value = d.reorder_level;
   document.getElementById('d_warn').value = d.expiry_warn_days != null ? d.expiry_warn_days : '';
-  document.getElementById('d_instr').value = d.default_instructions || '';
-  document.getElementById('d_dose_mode').value = d.dose_mode || 'standard';
+  document.getElementById('d_instr').value = DoseTemplate.read(d)?.additional_instructions ?? d.default_instructions ?? '';
+  resetStockDose(DoseTemplate.read(d), d.dose_mode || 'standard');
 }
 function clearForm() {
   document.getElementById('formTitle').textContent = 'เพิ่มยาใหม่';
   ['d_id', 'd_name', 'd_generic', 'd_price', 'd_cost', 'd_warn', 'd_instr'].forEach(x => document.getElementById(x).value = '');
   document.getElementById('d_unit').value = 'เม็ด';
   document.getElementById('d_reorder').value = 10;
-  document.getElementById('d_dose_mode').value = 'standard';
+  resetStockDose(null, 'standard');
 }
 async function saveDrug() {
+  if (pendingDrugSave) { drugSaveStatus('มีรายการที่ยังรอตรวจผล กรุณากดตรวจผลก่อนบันทึกอื่น',true); return; }
+  let template; try { template=readStockDose(); } catch(e) { toast(e.message,true); return; }
   const id = document.getElementById('d_id').value;
   const body = {
     name: document.getElementById('d_name').value,
@@ -388,15 +409,34 @@ async function saveDrug() {
     reorder_level: document.getElementById('d_reorder').value,
     expiry_warn_days: document.getElementById('d_warn').value,
     default_instructions: document.getElementById('d_instr').value,
+    default_dose: template,
     dose_mode: document.getElementById('d_dose_mode').value,
   };
   if (!body.name.trim()) { toast('ต้องมีชื่อยา', true); return; }
-  try {
-    if (id) await api('PATCH', `/api/drugs/${id}`, body);
-    else await api('POST', '/api/drugs', body);
-    toast('บันทึกแล้ว'); clearForm(); load();
-  } catch (e) { toast(e.message, true); }
+  pendingDrugSave={id:id || null,body:{...body,op_id:crypto.randomUUID()}};
+  sessionStorage.setItem('clinic_drug_save',JSON.stringify(pendingDrugSave));
+  await retryDrugSave();
 }
+
+let pendingDrugSave=null,drugSaving=false;
+try{pendingDrugSave=JSON.parse(sessionStorage.getItem('clinic_drug_save')||'null');}catch{}
+function drugSaveStatus(message,retry=false){document.getElementById('drugSaveStatus').textContent=message;document.getElementById('retryDrugSave').classList.toggle('hidden',!retry);}
+async function retryDrugSave(){
+ if(!pendingDrugSave||drugSaving)return;drugSaving=true;const p=pendingDrugSave;
+ drugSaveStatus('กำลังตรวจผลและบันทึกรายการยา…');
+ try{
+  const saved=await api(p.id?'PATCH':'POST','/api/drugs'+(p.id?'/'+p.id:''),p.body);
+  pendingDrugSave=null;sessionStorage.removeItem('clinic_drug_save');clearForm();
+  drugSaveStatus('บันทึก “'+p.body.name+'” แล้ว ค่าเริ่มต้นใช้ตอนเลือกยาใหม่ ไม่แก้คำสั่งยาที่ออกแล้ว');toast('บันทึกรายการยาแล้ว');
+  try{await load();}catch{drugSaveStatus('บันทึกแล้ว แต่โหลดตารางไม่สำเร็จ กรุณาเปิดหน้านี้ใหม่เพื่อตรวจรายการ');}
+ }catch(e){
+  if(e.status>=400&&e.status<500&&![401,423].includes(e.status)){pendingDrugSave=null;sessionStorage.removeItem('clinic_drug_save');drugSaveStatus(e.message);}
+  else drugSaveStatus('ยังยืนยันผลไม่ได้: '+p.body.name+' กดตรวจผลรายการเดิม ระบบจะไม่เพิ่มยาซ้ำ',true);
+  toast(e.message,true);
+ }finally{drugSaving=false;}
+}
+if(pendingDrugSave)drugSaveStatus('มีรายการยาที่ยังไม่ได้รับคำตอบ กรุณากดตรวจผลก่อนบันทึกใหม่',true);
+
 async function showMoves(id) {
   const d = drugs.find(x => x.id === id);
   const moves = await api('GET', `/api/drugs/${id}/movements`);
@@ -411,26 +451,57 @@ async function showMoves(id) {
 }
 async function addService() {
   const name = document.getElementById('svcName').value.trim();
-  const price = Number(document.getElementById('svcPrice').value);
+  const price = document.getElementById('svcPrice').value;
+  const cost = document.getElementById('svcCost').value;
   if (!name) { toast('ใส่ชื่อก่อน', true); return; }
-  await api('POST', '/api/services', { name, price });
-  document.getElementById('svcName').value = ''; document.getElementById('svcPrice').value = '';
-  toast('เพิ่มแล้ว'); load();
+  await saveServiceRequest(null, { name, price, cost });
 }
 function editService(id) {
   const s = services.find(x => x.id === id);
   openAsk({
-    title: `แก้ราคา — ${esc(s.name)}`,
-    fields: [{ id: 'mPrice', label: 'ราคาใหม่ (บาท)', type: 'number', value: s.price }],
-    okText: 'บันทึกราคา',
-    onOk: v => {
-      const price = Number(v.mPrice);
-      if (!isFinite(price) || price < 0) { toast('ราคาไม่ถูกต้อง', true); return; }
-      api('PATCH', `/api/services/${id}`, { name: s.name, price })
-        .then(() => { closeModal(); toast('แก้ราคาแล้ว'); load(); }).catch(e => toast(e.message, true));
-    },
+    title: `ราคา / ต้นทุนต่อครั้ง — ${esc(s.name)}`,
+    fields: [{ id: 'mPrice', label: 'ราคาขาย (บาท)', type: 'number', value: s.price },
+      { id: 'mCost', label: 'ต้นทุนต่อครั้ง (บาท) · ว่าง = ไม่ทราบ · 0 = ไม่มีต้นทุนตรง', type: 'number', value: s.cost ?? '' }],
+    okText: 'บันทึกราคาและทุน',
+    onOk: v => saveServiceRequest(id, { name:s.name, price:v.mPrice, cost:v.mCost }),
   });
 }
+// Keep the original operation across network loss/reload. Retry cannot create a second service.
+let pendingServiceSave = null, serviceSaving = false;
+try { pendingServiceSave = JSON.parse(sessionStorage.getItem('clinic_service_save') || 'null'); } catch {}
+function serviceStatus(message, retry = false) {
+  document.getElementById('serviceSaveStatus').textContent = message;
+  document.getElementById('retryServiceSave').classList.toggle('hidden', !retry);
+}
+async function saveServiceRequest(id, body) {
+  if (serviceSaving) return;
+  if (pendingServiceSave) { serviceStatus('ยังรอตรวจผลรายการก่อนหน้า กรุณากดตรวจผลก่อนเพิ่มหรือแก้รายการอื่น', true); toast('กรุณาตรวจผลรายการก่อนหน้าในหน้าค่าบริการก่อน', true); return; }
+  pendingServiceSave = { id, body: { ...body, op_id: crypto.randomUUID() } };
+  sessionStorage.setItem('clinic_service_save', JSON.stringify(pendingServiceSave));
+  await retryServiceSave();
+}
+async function retryServiceSave() {
+  if (!pendingServiceSave || serviceSaving) return;
+  serviceSaving = true;
+  const pending = pendingServiceSave;
+  serviceStatus('กำลังตรวจผลและบันทึกค่าบริการ…');
+  try {
+    await api(pending.id == null ? 'POST' : 'PATCH', '/api/services' + (pending.id == null ? '' : '/' + pending.id), pending.body);
+    pendingServiceSave = null; sessionStorage.removeItem('clinic_service_save');
+    closeModal();
+    if (pending.id == null) for (const id of ['svcName','svcPrice','svcCost']) document.getElementById(id).value = '';
+    serviceStatus('บันทึก “' + pending.body.name + '” แล้ว ต้นทุนนี้ใช้กับบิลใหม่ บิลเก่าไม่เปลี่ยน');
+    toast('บันทึกราคาและทุนแล้ว');
+    try { await load(); } catch { serviceStatus('บันทึกแล้ว แต่โหลดตารางไม่สำเร็จ กรุณาเปิดหน้านี้ใหม่เพื่อตรวจรายการ'); }
+  } catch(e) {
+    if (e.status >= 400 && e.status < 500 && e.status !== 401 && e.status !== 423) {
+      pendingServiceSave = null; sessionStorage.removeItem('clinic_service_save');
+      serviceStatus(e.message);
+    } else serviceStatus('ยังยืนยันผลไม่ได้: ' + pending.body.name + ' กรุณากดตรวจผล / ส่งรายการเดิมอีกครั้ง ระบบจะไม่เพิ่มซ้ำ', true);
+    toast(e.message, true);
+  } finally { serviceSaving = false; }
+}
+if (pendingServiceSave) serviceStatus('มีรายการที่ยังไม่ได้รับคำตอบ กรุณากดตรวจผลก่อนเพิ่มหรือแก้รายการใหม่', true);
 async function importCSV() {
   try {
     const r = await api('POST', '/api/drugs/import-csv', { csv: document.getElementById('csv').value });

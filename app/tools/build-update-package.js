@@ -71,6 +71,7 @@ function buildUpdatePackage(options) {
     if (fs.existsSync(path.join(outDir, name))) throw new Error(`ไฟล์ output มีอยู่แล้ว: ${name}`);
   }
 
+  require('../lib/runtime').pinned(APP_ROOT);
   const paths = collectReleasePaths(APP_ROOT, variant);
   const entries = paths.map(item => ({ name: item, source: path.join(APP_ROOT, ...item.split('/')) }));
   const inventory = entries.map(entry => {

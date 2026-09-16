@@ -2,3 +2,6 @@
 # บทเรียนจริง 2026-08-11: ดับเบิลคลิก launcher แล้วไม่ทำงานเพราะไฟล์เป็น LF
 *.cmd text eol=crlf
 *.bat text eol=crlf
+*.ps1 text eol=crlf
+# Preserve the pinned upstream license byte-for-byte, including its original indentation.
+app/vendor/NODE-LICENSE.txt -text whitespace=-space-before-tab

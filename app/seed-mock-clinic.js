@@ -270,6 +270,8 @@ if (db.prepare('SELECT COUNT(*) c FROM fav_sets').get().c === 0) {
   }
 }
 
+require('./seed-appointment-followup').seedAppointmentFollowup();
+
 const summary = {
   patients: db.prepare('SELECT COUNT(*) c FROM patients').get().c,
   chronic: countWhere(p => String(p.chronic || '').trim() !== ''),

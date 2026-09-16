@@ -27,6 +27,10 @@ function messageBox(text) {
 
 let fastCrashes = 0;
 function startServer() {
+  if(require('../lib/trial-start-guard')(APP_ROOT)){
+    messageBox('กำลังจัดการชุดทดลองหรืองานเดิมยังไม่เสร็จ กรุณาเปิด ทำต่อ.cmd ในโฟลเดอร์ผลการจัดการชุดทดลองเดิมก่อนเปิดโปรแกรม');
+    return;
+  }
   const startedAt = Date.now();
   // stdio ignore ได้เพราะ server เขียน log ของตัวเองผ่าน lib/applog แล้ว
   const child = spawn(process.execPath, ['--no-warnings', 'server.js'], {
@@ -42,6 +46,7 @@ function startServer() {
       messageBox('เปิดระบบคลินิกไม่ได้: ฐานข้อมูลถูกปรับโดยโปรแกรมรุ่นใหม่กว่า กรุณาแจ้งผู้ดูแลก่อนใช้งาน (รายละเอียดอยู่ในโฟลเดอร์ logs)');
       process.exit(1);
     }
+    if(code===12){messageBox('ยังจัดการชุดทดลองไม่เสร็จ กรุณาเปิด ทำต่อ.cmd ในโฟลเดอร์ผลเดิม');process.exit(1);}
     fastCrashes = uptimeMs < FAST_CRASH_MS ? fastCrashes + 1 : 0;
     if (fastCrashes >= 3) {
       messageBox('เปิดระบบคลินิกไม่สำเร็จ 3 ครั้งติดกัน — กรุณาแจ้งผู้ดูแล และถ้าเข้าโปรแกรมได้ให้กดปุ่ม "🆘 แจ้งปัญหา" ส่งไฟล์รายงานให้ผู้ดูแลด้วย');

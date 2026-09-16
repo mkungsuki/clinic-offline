@@ -7,6 +7,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { db, now, today, getSetting, setSetting, BACKUP_DIR, ATTACH_DIR, ASSET_DIR, DATA_DIR } = require('./db');
 const KEY_FILE = path.join(DATA_DIR, 'cloud-backup.key');
+const passwordRecovery = require('./password-recovery');
 const WAIT_BUFFER = new Int32Array(new SharedArrayBuffer(4));
 
 function sha256(file) {
@@ -42,7 +43,13 @@ function copyVerified(src, dst) {
 }
 
 function getOrCreateCloudKey() {
-  if (!fs.existsSync(KEY_FILE)) fs.writeFileSync(KEY_FILE, crypto.randomBytes(32), { mode: 0o600 });
+  if (!fs.existsSync(KEY_FILE)) {
+    const prior = parseDetail(lastBackup()).some(t => ['external', 'cloud_sync'].includes(t.kind) && t.ok);
+    if (prior || fs.existsSync(path.join(DATA_DIR, passwordRecovery.LOCAL_FILE)) || fs.existsSync(path.join(DATA_DIR, passwordRecovery.OWNER_FILE)) || getSetting('backup_cloud_key_exported', '0') === '1') {
+      throw new Error('ไม่พบข้อมูลปลดล็อกเดิมของเครื่อง กรุณาใช้ตัวช่วยกู้ด้วยรหัสหรือ USB กู้ฉุกเฉิน ระบบจะไม่สร้างกุญแจใหม่ทับทางกู้เดิม');
+    }
+    fs.writeFileSync(KEY_FILE, crypto.randomBytes(32), { mode: 0o600, flag: 'wx' });
+  }
   const key = fs.readFileSync(KEY_FILE);
   if (key.length !== 32) throw new Error('cloud backup key ไม่ถูกต้อง');
   return key;
@@ -157,7 +164,9 @@ function allocateBackupPaths(startedAt) {
     const stamp = `${base}-${String(sequence).padStart(3, '0')}`;
     const localFile = path.join(BACKUP_DIR, `clinic-${stamp}.db`);
     const manifestFile = path.join(BACKUP_DIR, `clinic-${stamp}.manifest.json`);
-    if (!fs.existsSync(localFile) && !fs.existsSync(manifestFile)) return { localFile, manifestFile };
+    const destinations = ['backup_dest_1', 'backup_dest_2', 'backup_cloud_dest'].map(k => getSetting(k, '')).filter(Boolean);
+    const existsElsewhere = destinations.some(d => fs.existsSync(path.join(d, `${path.basename(localFile)}.enc`)) || fs.existsSync(path.join(d, `${path.basename(manifestFile)}.enc`)));
+    if (!fs.existsSync(localFile) && !fs.existsSync(manifestFile) && !existsElsewhere) return { localFile, manifestFile };
   }
   throw new Error('มีการสำรองข้อมูลถี่เกินไปในวินาทีเดียว กรุณารอสักครู่แล้วลองใหม่');
 }
@@ -171,12 +180,15 @@ function copySnapshot(target, localFile, manifestFile) {
   fs.mkdirSync(dest, { recursive: true });
   const key = getOrCreateCloudKey();
   try {
+    passwordRecovery.claimDestination(DATA_DIR, dest, key);
+    const passwordCopy = passwordRecovery.copyEnvelope(DATA_DIR, dest, require('./recovery-core').keyFingerprint(key));
     encryptToSyncFolderVerified(localFile, path.join(dest, `${path.basename(localFile)}.enc`), key);
-    encryptToSyncFolderVerified(manifestFile, path.join(dest, `${path.basename(manifestFile)}.enc`), key);
     const attachments = syncEncryptedFiles(ATTACH_DIR, path.join(dest, 'attachments'), key);
     const assets = syncEncryptedFiles(ASSET_DIR, path.join(dest, 'assets'), key);
+    // Publish the restore point last, after its password file and payloads exist.
+    encryptToSyncFolderVerified(manifestFile, path.join(dest, `${path.basename(manifestFile)}.enc`), key);
     return { key: target.key, kind: target.kind, path: target.path, ok: true,
-      state: 'encrypted_to_sync_folder', encryption: 'AES-256-GCM', attachments, assets };
+      state: 'encrypted_to_sync_folder', encryption: 'AES-256-GCM', attachments, assets, passwordCopy };
   } finally { key.fill(0); }
 }
 
@@ -198,6 +210,11 @@ function runBackup() {
     if (integrity !== 'ok') throw new Error(`SQLite integrity_check: ${integrity}`);
     const localAttachments = syncAttachments(path.join(BACKUP_DIR, 'attachments'));
     const localAssets = syncFiles(ASSET_DIR, path.join(BACKUP_DIR, 'assets'));
+    if (fs.existsSync(path.join(DATA_DIR, passwordRecovery.LOCAL_FILE))) {
+      const key = getOrCreateCloudKey();
+      try { passwordRecovery.copyEnvelope(DATA_DIR, BACKUP_DIR, require('./recovery-core').keyFingerprint(key)); }
+      finally { key.fill(0); }
+    }
     const manifest = {
       format: 1, created_at: startedAt, database: { file: path.basename(localFile),
         bytes: fs.statSync(localFile).size, sha256: sha256(localFile), integrity },
@@ -246,11 +263,14 @@ function status() {
   const targets = parseDetail(last);
   const externalOk = targets.some(t => t.kind === 'external' && t.ok);
   const cloud = targets.find(t => t.kind === 'cloud_sync') || null;
+  const password = passwordRecovery.localStatus(DATA_DIR);
   return {
     last, lastGood: good, ok: ageH < 25, age_hours: ageH === Infinity ? null : Math.round(ageH * 10) / 10,
     targets, off_device_ok: externalOk || !!(cloud && cloud.ok),
     coverage: externalOk || (cloud && cloud.ok) ? 'multi_copy' : 'local_only',
     cloud, cloud_key_exported: getSetting('backup_cloud_key_exported', '0') === '1',
+    password_ready: password.ready,
+    password_cloud_ready: !!(password.ready && cloud?.ok && cloud.passwordCopy?.id === password.id),
   };
 }
 

@@ -6,8 +6,34 @@
 <title>ตั้งค่า</title>
 <link rel="stylesheet" href="/app.css">
 <style>
-  .cols { grid-template-columns: 1fr 1fr; max-width: 1100px; margin: 0 auto; }
-  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+  .admin-shell { max-width: 1200px; margin: 16px auto; padding: 0 16px; }
+  .admin-layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 20px; align-items: start; }
+  .admin-menu { position: sticky; top: calc(var(--topbar-h, 60px) + 12px); }
+  #adminNav { display: grid; gap: 4px; }
+  #adminNav a { padding: 12px; border-radius: 8px; color: var(--ink); text-decoration: none; overflow-wrap: anywhere; }
+  #adminNav a[aria-current] { background: var(--blue); color: white; font-weight: 700; }
+  #adminPage { min-width: 0; }
+  #adminPage > .card { margin: 0 0 16px; }
+  #adminPage .row { flex-wrap: wrap; }
+  #adminPage .f { min-width: 0; }
+  #adminPage select, #adminPage input { max-width: 100%; }
+  #adminPage .t { table-layout: fixed; overflow-wrap: anywhere; }
+  #adminPage .t .btn { margin: 2px; white-space: normal; }
+  #adminSource, [hidden] { display: none !important; }
+  #adminStatus { padding: 12px 16px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 16px; }
+  .admin-save { padding: 12px 0 24px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .document-choice { display: flex; gap: 8px; flex-wrap: wrap; }
+  .document-choice .btn { min-width: 125px; min-height: 44px; }
+  .document-choice [aria-pressed="true"][data-value="1"] { background: #245eea; border-color: #245eea; color: white; }
+  .document-choice [aria-pressed="true"][data-value="0"] { background: #b42318; border-color: #b42318; color: white; }
+  .document-choice .choice-mark { visibility: hidden; }
+  .document-choice [aria-pressed="true"] .choice-mark { visibility: visible; }
+  .document-choice button:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+  @media (max-width: 900px) {
+    .admin-layout { grid-template-columns: minmax(0, 1fr); }
+    .admin-menu { position: static; }
+    #adminNav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
   /* การ์ดเครื่องห้องตรวจ: ลำดับ 4 ขั้นอ่านเป็นภาพเดียว — เลขขั้น + สถานะ + คำอธิบายสั้น */
   .lan-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
   .lan-steps li { display: grid; grid-template-columns: 34px 1fr; gap: 10px; align-items: start; padding: 8px 10px; border-radius: 10px; background: var(--surface2); }
@@ -21,18 +47,31 @@
 </head>
 <body>
 <div id="backupBanner"></div>
-<div class="cols hidden" id="adminControls">
+<div class="admin-shell hidden" id="adminControls">
+  <h1>ดูแลคลินิก</h1>
+  <div id="adminStatus" role="status"><span id="adminHealthText">กำลังตรวจสถานะข้อมูลสำรอง…</span> · <a href="/admin.html?section=backup">ดูการสำรองข้อมูล</a></div>
+  <div class="admin-layout">
+    <aside class="card admin-menu"><details id="adminMenu" open><summary>หมวดตั้งค่า</summary><nav id="adminNav" aria-label="หมวดตั้งค่า"></nav></details></aside>
+    <main><h2 id="adminPageTitle"></h2><div id="adminLoadError" role="alert"></div><div id="adminPage"></div>
+      <div id="adminSaveError" role="alert"></div>
+      <div class="admin-save"><button class="btn primary" id="adminSave" onclick="saveSettings().catch(() => {})">บันทึก</button><span class="muted" id="adminSaveState"></span></div>
+    </main>
+  </div>
+  <div id="adminSource">
+  <div class="card" data-admin-section="printing"><div class="stack"></div></div>
+  <div class="card" data-admin-section="advanced"><h2>นำเข้า / ส่งออกการตั้งค่า</h2><div class="stack" id="profileTools"></div></div>
   <div class="stack">
-    <div class="card" id="updateCard">
+    <div class="card" id="updateCard" data-admin-section="system">
       <h2>อัปเดตโปรแกรม</h2>
-      <div id="updateSummary" class="muted">กำลังตรวจสถานะ…</div>
+      <p id="trialToolsLink" hidden><a class="btn" href="/trial-tools.html">จัดการชุดทดลอง — เริ่มฝึกใหม่ / ถอนชุดทดลอง</a></p>
+      <div id="runtimeCard" class="banner hidden"><p id="runtimeSummary"></p><button type="button" class="btn" id="runtimeUpdateBtn" onclick="updateRuntime()">อัปเดตส่วนประกอบ</button><button type="button" class="btn" onclick="loadRuntimeStatus()">ตรวจสถานะอีกครั้ง</button><p>ระบบจะหยุดชั่วครู่และเก็บสำเนาที่ตรวจแล้วก่อนเปลี่ยน กรุณาให้ทุกเครื่องหยุดใช้งานก่อน หากจอขาดการติดต่อ ให้เปิดระบบจากไอคอนเดิมแล้วกลับมาตรวจสถานะ ไม่ต้องลบโปรแกรมหรือติดตั้งใหม่</p></div><div id="updateSummary" class="muted">กำลังตรวจสถานะ…</div>
       <div class="row mt">
         <button class="btn" id="checkUpdateBtn" onclick="checkUpdateNow()">ตรวจหารุ่นใหม่</button>
         <button class="btn primary hidden" id="applyUpdateBtn" onclick="applyUpdateNow()">อัปเดตตอนนี้</button>
       </div>
       <details class="mt"><summary>รายละเอียดครั้งล่าสุด</summary><pre id="updateDetail" class="muted" style="white-space:pre-wrap"></pre></details>
     </div>
-    <div class="card">
+    <div class="card" data-admin-section="clinic">
       <h2>ข้อมูลคลินิก (ขึ้นหัวใบเสร็จ/ใบรับรอง)</h2>
       <div class="stack">
         <label class="f"><span>ชื่อคลินิก</span><input type="text" id="s_clinic_name"></label>
@@ -49,8 +88,8 @@
         </div>
         <label class="f"><span>โลโก้คลินิก (PNG/JPG ไม่เกิน 2 MB)</span><input type="file" id="clinicLogo" accept="image/png,image/jpeg" onchange="uploadLogo(this)"></label>
         <div class="muted" id="logoState"></div>
-        <label class="f"><span>ข้อความท้ายเอกสาร</span><input type="text" id="s_document_footer" placeholder="เช่น กรุณาเก็บเอกสารนี้ไว้เป็นหลักฐาน"></label>
-        <fieldset class="paperset" id="paperCard" style="border:1px solid var(--line);border-radius:10px;padding:8px 12px 4px;margin:6px 0">
+        <label class="f" data-admin-move="printing"><span>ข้อความท้ายเอกสาร</span><input type="text" id="s_document_footer" placeholder="เช่น กรุณาเก็บเอกสารนี้ไว้เป็นหลักฐาน"></label>
+        <fieldset class="paperset" id="paperCard" data-admin-move="printing" style="border:1px solid var(--line);border-radius:10px;padding:8px 12px 4px;margin:6px 0">
           <legend>🖨️ กระดาษและการพิมพ์ — ตั้งแยกทีละเอกสาร กด "ดูตัวอย่าง" เทียบได้ก่อนบันทึก</legend>
           <div class="docbox" style="border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin:6px 0">
             <div style="font-weight:700;margin-bottom:4px">🧾 ใบเสร็จรับเงิน</div>
@@ -102,6 +141,25 @@
             </div>
             <div class="muted" style="font-size:12px">แบบแพทยสภา (ขับขี่/ตรวจสุขภาพ) เป็น A4 เสมอและฟอร์มแน่น — ขนาดตัวอักษรขยับได้เล็กน้อยเพื่อให้จบหน้าเดียว</div>
           </div>
+          <div class="paperitem" id="drugLabelSettings" style="border:1px solid var(--line);border-radius:8px;padding:12px;margin-top:10px">
+            <h3>ฉลากยาติดซอง</h3>
+            <label class="f"><span>เปิดใช้ฉลากยาติดซอง</span><select id="s_drug_label_enabled"><option value="0">ปิด (ค่าเริ่มต้น)</option><option value="1">เปิด — เลือกพิมพ์จากใบเสร็จ</option></select></label>
+            <label class="f"><span>กระดาษฉลาก</span><select id="s_drug_label_layout" onchange="syncLabelPreview()"><option value="a4-2x5">A4 · 2 × 5 ช่อง (แนะนำ)</option><option value="a4-3x8">A4 · 3 × 8 ช่อง</option><option value="roll">ม้วนฉลาก (ทดลอง)</option></select></label>
+            <div class="row"><label class="f"><span>กว้างม้วน (มม.)</span><input type="number" id="s_drug_label_width" value="80" min="20" max="200" step="0.1" onchange="syncLabelPreview()"></label><label class="f"><span>สูงม้วน (มม.)</span><input type="number" id="s_drug_label_height" value="50" min="20" max="200" step="0.1" onchange="syncLabelPreview()"></label></div>
+            <p class="muted">ใช้ข้อความจากใบเสร็จเดิม ถ้าล้นช่องจะหยุดพิมพ์และบอกให้เปลี่ยนขนาด ม้วนฉลากยังไม่ได้ทดสอบกับเครื่องจริง</p>
+            <a class="btn sm" id="previewLabels" href="/print/sample/labels" target="_blank" rel="noopener">ดูตัวอย่างฉลากยา</a>
+          </div>
+          <div class="paperitem" id="medicationSheetSettings" style="border:1px solid var(--line);border-radius:8px;padding:12px;margin-top:10px">
+            <h3 style="margin:0 0 8px">ใบยาอ่านง่าย (ตัวเลือกเสริม)</h3>
+            <label class="f"><span>เปิดใช้ใบยาอ่านง่าย</span><select id="s_medication_sheet_enabled"><option value="0">ปิด — ไม่เพิ่มปุ่มใบยา (ค่าเริ่มต้น)</option><option value="1">เปิด — เลือกพิมพ์เป็นรายคน</option></select></label>
+            <p class="muted">เมื่อเปิด จะมีปุ่ม “เปิดใบยาอ่านง่าย” ในหน้าใบเสร็จที่มีรายการยา ใช้วิธีใช้ที่บันทึกตอนจ่ายยา ไม่ต้องกรอกซ้ำ และไม่พิมพ์เองอัตโนมัติ</p>
+            <div class="row" style="flex-wrap:wrap">
+              <label class="f"><span>กระดาษ</span><select id="s_medication_sheet_paper" onchange="syncPaperPreview()"><option value="A4">A4 — เต็มหน้า (แนะนำ)</option><option value="A5">A5 — ครึ่งขนาด A4</option></select></label>
+              <label class="f"><span>ขนาดตัวอักษร</span><select id="s_medication_sheet_font" onchange="syncPaperPreview()"><option value="18">ใหญ่ — 18 pt (ขั้นต่ำ)</option><option value="20" selected>ใหญ่ขึ้น — 20 pt (แนะนำ)</option><option value="24">ใหญ่พิเศษ — 24 pt</option></select></label>
+            </div>
+            <a class="btn sm" id="previewMedication" href="/print/sample/medication?paper=A4&amp;font=20" target="_blank" rel="noopener">ดูตัวอย่างใบยา</a>
+            <p class="muted">ตั้งแล้วกด “บันทึก” ด้านล่าง · เปลี่ยนขนาดเฉพาะใบได้ก่อนพิมพ์ · เนื้อหายาวขึ้นหน้าใหม่ ไม่ย่อให้เล็กลง · ลองอ่านกับคนไข้ก่อนเลือกขนาด</p>
+          </div>
           <p class="muted">ตัวอย่างใช้ข้อมูลสมมติ ประทับคำว่า "ตัวอย่าง" ไม่บันทึกอะไร · ถ้าพิมพ์แล้วเนื้อหาเล็กลง/ขอบหาย ให้ตั้งค่าเครื่องพิมพ์เป็น "ขนาดจริง / Actual size" ไม่ใช่ "พอดีหน้า"</p>
         </fieldset>
         <details><summary>ข้อมูลผู้ออกใบเสร็จ (สำหรับชื่อกิจการ/ภาษี)</summary>
@@ -117,31 +175,42 @@
             <label class="f"><span>ข้อความภาษี (ใช้เฉพาะที่นักบัญชียืนยัน)</span><input type="text" id="s_receipt_vat_note" placeholder="เว้นว่างได้ ระบบจะไม่เดาเรื่อง VAT ให้"></label>
           </div>
         </details>
-        <details><summary>ตัวเลือกการแสดงผลเอกสาร (ใบเสร็จ/ใบนัด)</summary>
+        <details data-admin-move="printing" id="documentDisplayOptions"><summary>ตัวเลือกการแสดงผลเอกสาร (ใบเสร็จ/ใบนัด)</summary>
           <div class="stack mt">
             <p class="muted">ข้อมูลบังคับ เช่น ชื่อคลินิก ชื่อผู้ป่วย ยอดเงิน วันนัด พิมพ์เสมอ — ส่วนด้านล่างเลือกได้ตามต้องการ
               (ใบเสร็จจะจำค่าที่เลือกไว้ ณ วันออกใบ พิมพ์ซ้ำภายหลังหน้าตาไม่เปลี่ยน)</p>
-            <label class="f"><span>แสดงชื่อแพทย์ผู้ตรวจบนใบเสร็จ</span>
-              <select id="s_receipt_show_doctor"><option value="1">แสดง</option><option value="0">ไม่แสดง</option></select></label>
-            <label class="f"><span>แสดงชื่อแพทย์บนใบนัด</span>
-              <select id="s_appt_slip_show_doctor"><option value="1">แสดง</option><option value="0">ไม่แสดง</option></select></label>
-            <label class="f"><span>แสดงหมายเหตุนัด (เช่น เหตุผลที่นัด) บนใบนัด</span>
-              <select id="s_appt_slip_show_note"><option value="1">แสดง</option><option value="0">ไม่แสดง — เหมาะเมื่อไม่อยากให้เหตุผลนัดติดกระดาษ</option></select></label>
+            <div class="f"><span id="receiptDoctorLabel">แสดงชื่อแพทย์ผู้ตรวจบนใบเสร็จ</span>
+              <select id="s_receipt_show_doctor" hidden aria-hidden="true"><option value="1">แสดง</option><option value="0">ไม่แสดง</option></select>
+              <div class="document-choice" role="group" aria-labelledby="receiptDoctorLabel" data-setting="s_receipt_show_doctor">
+                <button type="button" class="btn" data-value="1" aria-pressed="true" onclick="chooseDocumentVisibility(this)"><span class="choice-mark" aria-hidden="true">✓ </span>แสดง</button>
+                <button type="button" class="btn" data-value="0" aria-pressed="false" onclick="chooseDocumentVisibility(this)"><span class="choice-mark" aria-hidden="true">✓ </span>ไม่แสดง</button>
+              </div></div>
+            <div class="f"><span id="appointmentDoctorLabel">แสดงชื่อแพทย์บนใบนัด</span>
+              <select id="s_appt_slip_show_doctor" hidden aria-hidden="true"><option value="1">แสดง</option><option value="0">ไม่แสดง</option></select>
+              <div class="document-choice" role="group" aria-labelledby="appointmentDoctorLabel" data-setting="s_appt_slip_show_doctor">
+                <button type="button" class="btn" data-value="1" aria-pressed="true" onclick="chooseDocumentVisibility(this)"><span class="choice-mark" aria-hidden="true">✓ </span>แสดง</button>
+                <button type="button" class="btn" data-value="0" aria-pressed="false" onclick="chooseDocumentVisibility(this)"><span class="choice-mark" aria-hidden="true">✓ </span>ไม่แสดง</button>
+              </div></div>
+            <div class="f"><span id="appointmentNoteLabel">แสดงหมายเหตุนัด (เช่น เหตุผลที่นัด) บนใบนัด</span>
+              <select id="s_appt_slip_show_note" hidden aria-hidden="true"><option value="1">แสดง</option><option value="0">ไม่แสดง</option></select>
+              <div class="document-choice" role="group" aria-labelledby="appointmentNoteLabel" data-setting="s_appt_slip_show_note">
+                <button type="button" class="btn" data-value="1" aria-pressed="true" onclick="chooseDocumentVisibility(this)"><span class="choice-mark" aria-hidden="true">✓ </span>แสดง</button>
+                <button type="button" class="btn" data-value="0" aria-pressed="false" onclick="chooseDocumentVisibility(this)"><span class="choice-mark" aria-hidden="true">✓ </span>ไม่แสดง</button>
+              </div><span class="muted">เลือก “ไม่แสดง” หากไม่ต้องการให้เหตุผลนัดติดบนกระดาษ</span></div>
             <label class="f"><span>ข้อความท้ายใบนัด</span>
               <input type="text" id="s_appt_slip_footer" placeholder="หากไม่สะดวกมาตามนัด กรุณาโทรแจ้งเลื่อนนัดล่วงหน้า"></label>
           </div>
         </details>
         <label class="f"><span>ค่าบริการที่ใส่บิลให้อัตโนมัติเมื่อเริ่มตรวจ (พิมพ์ชื่อให้ตรงรายการค่าบริการ · เว้นว่าง = ไม่ใส่)</span>
           <input type="text" id="s_default_service_name" placeholder="ค่าตรวจรักษา"></label>
-        <label class="f"><span>เปิดหน้าต่างพิมพ์อัตโนมัติเมื่อออกใบเสร็จ/ใบรับรอง</span>
+        <label class="f" data-admin-move="printing"><span>เปิดหน้าต่างพิมพ์อัตโนมัติเมื่อออกใบเสร็จ/ใบรับรอง</span>
           <select id="s_auto_print"><option value="1">เปิด (มีปริ้นเตอร์)</option><option value="0">ปิด (ยังไม่มีปริ้นเตอร์ / ช่วงทดสอบ)</option></select></label>
-        <button class="btn primary" onclick="saveSettings()">💾 บันทึก</button>
-        <div class="row"><button class="btn sm" onclick="exportProfile()">⬇ ส่งออกข้อมูลตั้งคลินิก</button>
+        <div class="row" data-admin-move="advanced"><button class="btn sm" onclick="exportProfile()">⬇ ส่งออกข้อมูลตั้งคลินิก</button>
           <label class="btn sm">⬆ นำเข้าข้อมูลตั้งคลินิก<input type="file" accept="application/json" style="display:none" onchange="importProfile(this)"></label></div>
-        <p class="muted">ไฟล์ตั้งคลินิกไม่มีบัญชีผู้ใช้ รหัสผ่าน หรือข้อมูลผู้ป่วย เหมาะสำหรับเตรียมเครื่องให้เพื่อนแต่ละคลินิก</p>
+        <p class="muted" data-admin-move="advanced">นำเข้า/ส่งออกครอบคลุมข้อมูลคลินิก การพิมพ์ และค่าปลายทางสำรอง — ไม่ใช่เฉพาะหน้านี้ · ไฟล์ไม่มีบัญชีผู้ใช้ รหัสผ่าน หรือข้อมูลผู้ป่วย</p>
       </div>
     </div>
-    <div class="card">
+    <div class="card" data-admin-section="backup">
       <h2>ความปลอดภัยของข้อมูล</h2>
       <div class="stack">
         <div id="recoveryHeadline" style="font-size:1.35rem;font-weight:700">กำลังตรวจ…</div>
@@ -151,16 +220,38 @@
           <button id="adminBackupBtn" class="btn green" onclick="saveAndRunBackup()">สำรองข้อมูลตอนนี้</button>
           <button id="drillBtn" class="btn" onclick="runRecoveryDrill()">ซ้อมกู้ข้อมูล</button>
         </div>
+        <div class="row">
+          <button id="passwordSetupBtn" class="btn" onclick="openRecoveryPassword()">ตั้ง / เปลี่ยนรหัสสำรองข้อมูล</button>
+          <button class="btn" onclick="document.getElementById('setupWizard').classList.remove('hidden');refreshRecoveryOptions()">เลือกที่เก็บสำรอง / USB กู้เสริม</button>
+          <button class="btn" onclick="openRecoveryHelper()">เปิดตัวช่วยกู้บนเครื่องหลัก</button>
+        </div>
+        <label class="f"><span>เวลาสำรองอัตโนมัติ (เลือกช่วงที่เครื่องเปิดอยู่)</span><input type="time" id="s_backup_time" value="21:00"></label>
+        <div id="passwordSetup" class="stack hidden" style="border-top:1px solid #ddd;padding-top:14px">
+          <h3>รหัสสำหรับกู้ข้อมูลบนเครื่องใหม่</h3>
+          <p>เมื่อเครื่องเดิมเสีย ใช้ข้อมูลสำรองที่ดาวน์โหลดจากคลาวด์หรือ USB สำรอง พร้อมรหัสนี้กู้ได้ โดยไม่ต้องมี USB กู้ฉุกเฉิน</p>
+          <p class="muted">ใช้คำที่จำได้หลายคำ ยาว 12–128 ตัวอักษร ภาษาไทยได้ จะจำ จด หรือเก็บในโปรแกรมจัดการรหัสก็ได้ ถ้าลืมรหัสพร้อมกับเสียเครื่องเดิมและไม่มี USB กู้ฉุกเฉิน จะกู้ไม่ได้ ผู้พัฒนาไม่มีรหัสให้แทน</p>
+          <label class="f"><span>ตั้งรหัสสำรองข้อมูล</span><input id="recoveryPassword" type="password" autocomplete="new-password" maxlength="256"></label>
+          <label class="f"><span>พิมพ์รหัสสำรองอีกครั้ง</span><input id="recoveryPasswordConfirm" type="password" autocomplete="new-password" maxlength="256"></label>
+          <label class="f"><span>PIN ผู้ดูแล (ถ้าไม่ได้ตั้ง PIN ให้ใช้รหัสเข้าสู่ระบบ)</span><input id="recoveryAdminPin" type="password" autocomplete="current-password" maxlength="128"></label>
+          <p class="muted">ตั้งใหม่ได้ขณะเครื่องเดิมยังเปิดได้ สำเนาที่ปลายทางจะใช้รหัสใหม่เมื่อส่งไฟล์ครบ การเปลี่ยนรหัสนี้ไม่เพิกถอนรหัสเก่าจากไฟล์ที่คนอื่นเคยคัดลอกไว้</p>
+          <button id="saveRecoveryPasswordBtn" class="btn primary" onclick="saveRecoveryPassword()">บันทึกรหัสและสำรองข้อมูล</button>
+          <div id="passwordResult" aria-live="polite" style="white-space:pre-line"></div>
+        </div>
+        <div id="passwordDrill" class="stack hidden">
+          <label class="f"><span>รหัสสำรองข้อมูลที่จะลองกู้</span><input id="drillPassword" type="password" autocomplete="current-password" maxlength="256"></label>
+          <button id="passwordDrillBtn" class="btn primary" onclick="runRecoveryDrill(true)">ลองกู้ด้วยรหัสนี้</button>
+          <p class="muted">ลองจากไฟล์ที่ปลายทางจริง โดยไม่ใช้กุญแจในเครื่องช่วย และไม่เปลี่ยนข้อมูลที่ใช้งานอยู่</p>
+        </div>
         <div id="adminBackupResult" class="muted" aria-live="polite" style="white-space:pre-line"></div>
 
         <div id="setupWizard" class="stack hidden" style="border-top:1px solid #ddd;padding-top:14px">
           <h3>ตั้งค่าครั้งแรก</h3>
-          <p class="muted">เปิด Google Drive หรือ OneDrive และเสียบ USB หนึ่งอัน ระบบจะค้นหาให้เอง</p>
+          <p class="muted">เปิด Google Drive หรือ OneDrive ระบบจะค้นหาให้เอง ถ้าต้องการเก็บสำเนาใน USB เพิ่ม ให้เสียบ USB ด้วย</p>
           <label class="f"><span>เก็บสำเนาบนคลาวด์ที่</span><select id="cloudChoice"></select></label>
           <label class="f"><span>เก็บสำเนาใน external drive เพิ่ม (ถ้ามี)</span><select id="externalChoice"><option value="">ยังไม่ใช้</option></select></label>
           <button class="btn primary" onclick="configureRecovery()">บันทึกตำแหน่งที่พบ</button>
           <hr class="hr">
-          <label class="f"><span>USB สำหรับกู้ฉุกเฉิน</span><select id="kitChoice"></select></label>
+          <label class="f"><span>USB กู้ฉุกเฉินเสริม (ไม่บังคับเมื่อใช้รหัสสำรอง)</span><select id="kitChoice"></select></label>
           <div class="row"><button class="btn" onclick="refreshRecoveryOptions()">ค้นหา USB ใหม่</button>
             <button class="btn green" onclick="createRecoveryKit()">สร้าง Recovery Kit</button></div>
         </div>
@@ -168,16 +259,15 @@
         <details>
           <summary>รายละเอียดสำหรับช่าง</summary>
           <div class="stack mt">
-            <label class="f"><span>เวลาสำรองอัตโนมัติ</span><input type="time" id="s_backup_time" value="21:00"></label>
             <label class="f"><span>External path 1</span><input type="text" id="s_backup_dest_1"></label>
             <label class="f"><span>External/network path 2</span><input type="text" id="s_backup_dest_2"></label>
             <label class="f"><span>Cloud sync-folder path</span><input type="text" id="s_backup_cloud_dest"></label>
-            <button class="btn" onclick="saveSettings()">บันทึกรายละเอียด</button>
+            <p class="muted">แก้แล้วกด “บันทึกสำรองและกู้ข้อมูล” ด้านล่าง</p>
           </div>
         </details>
       </div>
     </div>
-    <div class="card" id="accessCard">
+    <div class="card" id="accessCard" data-admin-section="advanced">
       <h2>การเข้าใช้ระบบ (24 ชม.)</h2>
       <div class="stack">
         <div id="authHeadline" style="font-size:1.15rem;font-weight:700">กำลังตรวจ…</div>
@@ -196,7 +286,7 @@
         </details>
       </div>
     </div>
-    <div class="card">
+    <div class="card" data-admin-section="advanced">
       <h2>รวมคนไข้ซ้ำ</h2>
       <div class="row">
         <label class="f"><span>HN ตัวซ้ำ (จะถูกซ่อน)</span><input type="text" id="dupHn" placeholder="69-0012"></label>
@@ -210,7 +300,7 @@
   <div class="stack">
     <!-- เครื่องห้องตรวจ (คอมเครื่องที่สอง) — 2026-08-16: ตัวช่วยเคยมีแต่ตอนติดตั้ง/ไฟล์ใน C:\clinic* ที่ผู้ใช้ไม่เข้าไปหา
          การ์ดนี้คือทางหลักสำหรับทำ "ทีหลัง" + บอกสถานะ 4 ขั้นว่าถึงไหน/ทำไมเครื่องหมอเข้าไม่ได้ -->
-    <div class="card" id="lanCard">
+    <div class="card" id="lanCard" data-admin-section="connections">
       <h2>🖥️ เครื่องห้องตรวจ (คอมเครื่องที่สอง)</h2>
       <div class="stack">
         <div id="lanHeadline" style="font-size:1.1rem;font-weight:700">กำลังตรวจ…</div>
@@ -224,13 +314,15 @@
         <details><summary>รายละเอียดทางเทคนิค (สำหรับผู้ดูแล/ช่าง)</summary><pre id="lanDetail" class="muted" style="white-space:pre-wrap"></pre></details>
       </div>
     </div>
-    <div class="card">
+    <div class="card" data-admin-section="users">
       <h2>ผู้ใช้งาน</h2>
+      <p class="hint">หมอที่ทำคนเดียว: เพิ่มหรือเลือกบัญชีแพทย์ แล้วเปิด “ทำงานหน้าร้านด้วย” เพื่อใช้คลังยาและเก็บเงินในบัญชีเดียว ผู้ใช้นั้นต้องเข้าสู่ระบบใหม่เมื่อเปลี่ยนสิทธิ์</p>
+      <div id="frontPermissionResult" role="status" class="hint"></div>
       <table class="t" id="userTable"></table>
-      <hr class="hr">
-      <div class="stack">
+      <details><summary>เพิ่มผู้ใช้งาน</summary>
+      <div class="stack mt">
         <div class="row">
-          <label class="f"><span>username</span><input type="text" id="u_name"></label>
+          <label class="f"><span>ชื่อสำหรับเข้าสู่ระบบ</span><input type="text" id="u_name"></label>
           <label class="f"><span>ชื่อที่แสดง</span><input type="text" id="u_display"></label>
           <label class="f"><span>ชื่อแพทย์ภาษาอังกฤษ (ถ้ามี)</span><input type="text" id="u_display_en"></label>
         </div>
@@ -241,16 +333,18 @@
         <div class="row">
           <label class="f"><span>บทบาท</span>
             <select id="u_role"><option value="front">หน้าคลินิก</option><option value="doctor">แพทย์</option><option value="admin">ผู้ดูแล</option></select></label>
-          <label class="f"><span>รหัสผ่าน</span><input type="text" id="u_pass"></label>
-          <label class="f"><span>PIN (4 หลัก ปลดล็อกจอ)</span><input type="text" id="u_pin" maxlength="6"></label>
+          <p id="accountChangeHelp" class="hint">เปลี่ยนรหัสผ่านหรือ PIN หรือปิดบัญชี: ผู้ใช้นั้นจะต้องเข้าสู่ระบบใหม่ทุกเครื่อง หากหน้าจอขาดการติดต่อหลังบันทึก ให้ลองเข้าสู่ระบบด้วยรหัสใหม่ก่อนเปลี่ยนซ้ำ <a href="/login.html">ไปหน้าเข้าสู่ระบบ</a></p><label class="f"><span>รหัสผ่าน</span><input type="password" id="u_pass" autocomplete="new-password"></label>
+          <label class="f"><span>PIN (4–6 หลัก ปลดล็อกจอ)</span><input type="password" id="u_pin" maxlength="6" autocomplete="new-password"></label>
         </div>
         <button class="btn primary" onclick="addUser()">➕ เพิ่มผู้ใช้</button>
       </div>
+      </details>
     </div>
   </div>
 </div>
 
-<section class="card hidden" id="aboutCard" style="max-width:1100px;margin:16px auto;overflow-wrap:anywhere" aria-labelledby="aboutTitle">
+</div>
+<section class="card hidden" id="aboutCard" data-admin-section="system" style="max-width:1100px;margin:16px auto;overflow-wrap:anywhere" aria-labelledby="aboutTitle">
   <h2 id="aboutTitle">เกี่ยวกับโปรแกรม</h2>
   <p>ระบบคลินิก Offline · รุ่น <span id="aboutVersion">กำลังอ่านรุ่น…</span></p>
   <p>แจกฟรีภายใต้ AGPL-3.0 · อ่านสัญญาอนุญาตฉบับเต็มได้จากไฟล์ LICENSE ในโฟลเดอร์โปรแกรม</p>
@@ -259,9 +353,10 @@
   <img id="donateQr" src="/donate-qr.png" alt="QR สนับสนุนโครงการ ภาพต้นฉบับจากเจ้าของ" style="display:block;width:280px;max-width:100%;height:auto;object-fit:contain">
 </section>
 <script src="/common.js"></script>
+<script src="/admin-navigation.js"></script>
 <script>
 'use strict';
-const SKEYS = ['clinic_name', 'clinic_address', 'clinic_phone', 'clinic_license', 'clinic_name_en', 'clinic_address_en',
+const SKEYS = ['drug_label_enabled','drug_label_layout','drug_label_width','drug_label_height','medication_sheet_enabled', 'medication_sheet_paper', 'medication_sheet_font', 'clinic_name', 'clinic_address', 'clinic_phone', 'clinic_license', 'clinic_name_en', 'clinic_address_en',
   'receipt_issuer_name', 'receipt_issuer_address', 'receipt_tax_id', 'receipt_branch', 'receipt_book_no', 'receipt_vat_note',
   'receipt_show_doctor', 'appt_slip_show_doctor', 'appt_slip_show_note', 'appt_slip_footer', 'default_service_name',
   'document_footer', 'medcert_paper_size', 'medcert_font_scale', 'receipt_font_scale', 'appt_font_scale', 'receipt_paper', 'appointment_paper', 'backup_dest_1', 'backup_dest_2', 'backup_cloud_dest', 'backup_time', 'auto_print'];
@@ -269,29 +364,48 @@ let userRows = [];
 let recoveryHealth = null;
 let recoveryOptions = null;
 
+async function loadRuntimeStatus() {
+ api('GET','/api/admin/trial-tools').then(s=>{document.getElementById('trialToolsLink').hidden=!s.available;}).catch(()=>{});
+ try {
+  const result = await api('GET', '/api/admin/runtime-status');
+  document.getElementById('runtimeCard').classList.toggle('hidden', !result.needed && !result.outcome);
+  document.getElementById('runtimeSummary').textContent = result.needed ? 'มีส่วนประกอบโปรแกรมที่ต้องอัปเดต เพื่อรับการดูแลความปลอดภัยต่อเนื่อง' : 'ส่วนประกอบโปรแกรมเป็นรุ่นที่เตรียมไว้แล้ว';
+  if(result.outcome) document.getElementById('runtimeSummary').textContent += ' — ' + result.outcome.message;
+  const button = document.getElementById('runtimeUpdateBtn');button.disabled = !result.host || !result.installed || !result.needed;
+  if(!result.host) document.getElementById('runtimeSummary').textContent += ' — ให้ผู้ดูแลเปิดหน้านี้จากเครื่องหน้าร้าน';
+ } catch(error) { document.getElementById('runtimeCard').classList.remove('hidden');document.getElementById('runtimeSummary').textContent = 'ยังตรวจส่วนประกอบไม่ได้: ' + error.message; }
+}
+async function updateRuntime() {
+ const button=document.getElementById('runtimeUpdateBtn');button.disabled=true;
+ try { await api('POST','/api/admin/runtime-update',{});document.getElementById('runtimeSummary').textContent='เปิดกล่องยืนยันบนเครื่องหน้าร้านแล้ว กรุณาตรวจและเลือกดำเนินการ เมื่อเสร็จแล้วให้กดตรวจสถานะอีกครั้ง'; }
+ catch(error){document.getElementById('runtimeSummary').textContent='ยังยืนยันการเปิดตัวช่วยไม่ได้: '+error.message+' — ตรวจกล่องบนเครื่องหน้าร้านและสถานะก่อนกดซ้ำ';}
+ finally { button.disabled=false; }
+}
 async function load() {
   const s = await api('GET', '/api/settings');
-  const backupStatus = await api('GET', '/api/backup/status');
-  recoveryHealth = await api('GET', '/api/recovery/health');
-  for (const k of SKEYS) { const el = document.getElementById('s_' + k); if (el && s[k]) el.value = s[k]; }
+  for (const k of SKEYS) setAdminFieldValue(document.getElementById('s_' + k), s[k]);
+  syncDocumentVisibility();
   // รอบ l เก็บ slip_paper (ใบเดียวคุมใบเสร็จ+ใบนัด) — เครื่องที่ตั้งไว้แล้วให้เห็นค่าเดิมในช่องใหม่ทั้งสอง จนกว่าจะบันทึกทับ
   for (const k of ['receipt_paper', 'appointment_paper']) { const el = document.getElementById('s_' + k); if (el && !s[k] && s.slip_paper) el.value = s.slip_paper; }
   syncPaperPreview();
-  const users = await api('GET', '/api/users'); userRows = users;
-  loadUpdateStatus();
+  const users = adminSection === 'users' ? await api('GET', '/api/users') : []; userRows = users;
+  if (adminSection === 'system') { loadUpdateStatus(); loadRuntimeStatus(); }
   document.getElementById('logoState').textContent = s.clinic_logo_file ? `ใช้อยู่: ${s.clinic_logo_file}` : 'ยังไม่มีโลโก้';
-  renderRecoveryHealth(recoveryHealth);
-  loadAuthSummary();
-  loadLanStatus();
+  api('GET', '/api/recovery/health').then(h => { recoveryHealth = h; renderRecoveryHealth(h); }).catch(() => {
+    document.getElementById('adminHealthText').textContent = 'ยังตรวจสถานะสำรองไม่ได้ กรุณาเปิดหน้าสำรองข้อมูลเพื่อตรวจอีกครั้ง';
+  });
+  if (adminSection === 'advanced') loadAuthSummary();
+  if (adminSection === 'connections') loadLanStatus();
   document.getElementById('userTable').innerHTML =
-    `<tr><th>username</th><th>ชื่อ</th><th>บทบาท</th><th></th></tr>` +
+    `<tr><th>ชื่อเข้าสู่ระบบ</th><th>ชื่อ</th><th>บทบาท</th><th>จัดการ</th></tr>` +
     users.map(u => `<tr ${u.active ? '' : 'style="opacity:.5"'}>
       <td>${esc(u.username)}</td><td>${esc(u.display_name)}${u.display_name_en ? `<div class="muted">${esc(u.display_name_en)}</div>` : ''}</td>
       <td>${{ doctor: 'แพทย์', front: 'หน้าคลินิก', admin: 'ผู้ดูแล' }[u.role]}${u.role === 'doctor' ? `<div class="muted">ใบประกอบ ${esc(u.medical_license || 'ยังไม่ระบุ')} ${esc(u.specialty || '')}</div>` : ''}</td>
-      <td><button class="btn sm" onclick="resetPw(${u.id})">รหัสใหม่</button>
-          <button class="btn sm" onclick="resetPin(${u.id})">PIN ใหม่</button>
-          ${u.role === 'doctor' ? `<button class="btn sm" onclick="editDoctor(${u.id})">ข้อมูลแพทย์</button>` : ''}
-          <button class="btn sm ${u.active ? 'ghost-red' : 'green'}" onclick="toggleUser(${u.id}, ${u.active ? 0 : 1})">${u.active ? 'ปิด' : 'เปิด'}</button></td></tr>`).join('');
+      <td><button class="btn sm" onclick="resetPw(${u.id})">เปลี่ยนรหัสผ่าน</button>
+          <button class="btn sm" onclick="resetPin(${u.id})">เปลี่ยน PIN</button>
+          ${u.role === 'doctor' ? `<button class="btn sm" onclick="editDoctor(${u.id})">ข้อมูลแพทย์</button><button class="btn sm" data-front-user="${u.id}" onclick="confirmFrontPermission(${u.id}, ${!u.front_desk})">${u.front_desk ? 'ทำงานหน้าร้านด้วย: เปิดอยู่' : 'ทำงานหน้าร้านด้วย: ปิดอยู่'}</button>` : ''}
+          <button class="btn sm ${u.active ? 'ghost-red' : 'green'}" onclick="toggleUser(${u.id}, ${u.active ? 0 : 1})">${u.active ? 'ระงับการใช้งาน' : 'เปิดใช้งาน'}</button></td></tr>`).join('');
+  rememberAdminFields();
 }
 // security round 1: สรุปการเข้าใช้จาก auth_events (ไม่มีรหัส/PIN) + ค้น access_log
 const ACTION_TH = { view_patient: 'เปิดข้อมูลคนไข้', view_history: 'เปิดประวัติการรักษา', view_documents: 'เปิดรายการเอกสาร', export: 'ส่งออกข้อมูล', print: 'สั่งพิมพ์' };
@@ -331,14 +445,16 @@ async function searchAccessLog() {
 // การ์ดนี้ตอบ 2 คำถามของผู้ใช้: "ตอนนี้ถึงขั้นไหนแล้ว" และ "ทำไมเครื่องหมอเข้าไม่ได้" — ภาษาคน ไม่มีศัพท์ช่างนอก <details>
 let lanStatusCache = null;
 function lanStepsModel(s) {
+  const folderName=s.setup?.output_dir?.split(/[/\\]/).pop() || (ME?.demo_mode?'ส่งไปเครื่องหมอ (ทดลอง)':'ส่งไปเครื่องหมอ');
+  const shortcutName=(s.setup?.shortcut_name || (s.setup?'เปิดระบบคลินิก (ห้องหมอ).url':ME?.demo_mode?'เปิดระบบคลินิก (ห้องหมอ ทดลอง).url':'เปิดระบบคลินิก (ห้องหมอ).url')).replace(/\.url$/,'');
   // at เป็น ISO พร้อม offset (PowerShell 'o') — แปลงเป็นเวลาท้องถิ่นก่อนแสดง
   const atDate = s.setup?.at ? new Date(s.setup.at) : null;
   const pad2 = n => String(n).padStart(2, '0');
   const setupAt = atDate && !isNaN(atDate) ? thDate(`${atDate.getFullYear()}-${pad2(atDate.getMonth() + 1)}-${pad2(atDate.getDate())} ${pad2(atDate.getHours())}:${pad2(atDate.getMinutes())}`) : null;
   const step1 = { title: 'ตั้งค่าที่เครื่องนี้ (เครื่องหน้าร้าน)', where: 'กดปุ่ม "ตั้งค่าเครื่องห้องตรวจ" ด้านล่าง → กด Yes ที่ Windows ถาม → ตอบกล่องเรื่อง Wi-Fi → รอกล่อง "สำเร็จ" (โปรแกรมจะรีสตาร์ทเอง)' };
-  const step2 = { title: 'นำโฟลเดอร์ "ส่งไปเครื่องหมอ" ไปที่เครื่องห้องตรวจ', where: 'อยู่บน Desktop ของเครื่องนี้ — ส่งด้วย USB หรือแชร์โฟลเดอร์ในคลินิก ในโฟลเดอร์ไม่มีข้อมูลคนไข้' };
+  const step2 = { title: `นำโฟลเดอร์ "${folderName}" ไปที่เครื่องห้องตรวจ`, where: 'อยู่บน Desktop ของเครื่องนี้ — ส่งด้วย USB หรือแชร์โฟลเดอร์ในคลินิก ในโฟลเดอร์ไม่มีข้อมูลคนไข้' };
   const step3 = { title: 'ที่เครื่องห้องตรวจ: ดับเบิลคลิก "ติดตั้งใบรับรอง (เครื่องห้องตรวจ)"', where: 'กด Yes เมื่อ Windows ถาม ทำครั้งเดียว จะขึ้นกล่อง "ติดตั้งใบรับรองแล้ว"' };
-  const step4 = { title: 'ที่เครื่องห้องตรวจ: เปิดทางลัด "เปิดระบบคลินิก (ห้องหมอ)"', where: 'ที่อยู่ต้องขึ้นต้นด้วย https และมีรูปกุญแจ ไม่มีคำเตือน แล้วเข้าระบบด้วยบัญชีแพทย์' };
+  const step4 = { title: `ที่เครื่องห้องตรวจ: เปิดทางลัด "${shortcutName}"`, where: 'ที่อยู่ต้องขึ้นต้นด้วย https และมีรูปกุญแจ ไม่มีคำเตือน แล้วเข้าระบบด้วยบัญชีแพทย์' };
   // ขั้น 1
   if (s.headline === 'ready') { step1.cls = 'done'; step1.state = `✅ ทำแล้ว${setupAt ? ' เมื่อ ' + setupAt : ''} · ลิงก์เครื่องห้องตรวจ: ${s.url || '-'}`; }
   else if (s.headline === 'not_setup') { step1.cls = 'next'; step1.state = '⬜ ยังไม่ได้ทำ — เริ่มที่ปุ่มด้านล่าง'; }
@@ -350,7 +466,7 @@ function lanStepsModel(s) {
   else { step1.cls = ''; step1.state = '⬜'; }
   // ขั้น 2
   if (s.setup?.output_dir) { step2.cls = s.step1_done ? 'done' : ''; step2.state = `📁 โฟลเดอร์พร้อมแล้วที่ ${s.setup.output_dir}`; }
-  else if (s.setup?.output_dir_missing) { step2.cls = 'warn'; step2.state = '⚠️ โฟลเดอร์ "ส่งไปเครื่องหมอ" ถูกลบ/ย้ายไปแล้ว — กดตั้งค่าใหม่จะสร้างให้อีกครั้ง'; }
+  else if (s.setup?.output_dir_missing) { step2.cls = 'warn'; step2.state = '⚠️ โฟลเดอร์สำหรับส่งไปเครื่องหมอถูกลบ/ย้ายไปแล้ว — กดตั้งค่าใหม่จะสร้างให้อีกครั้ง'; }
   else { step2.cls = ''; step2.state = '⬜ รอขั้น 1'; }
   // ขั้น 3 — ระบบตรวจจากเครื่องนี้ไม่ได้ บอกตรง ๆ
   step3.cls = ''; step3.state = 'ℹ️ ตรวจจากเครื่องนี้ไม่ได้ — ดูที่เครื่องห้องตรวจว่าขึ้นกล่อง "ติดตั้งใบรับรองแล้ว" · ถ้าเปิดแล้วเบราว์เซอร์เตือน "ไม่ปลอดภัย" = ยังไม่ได้ทำขั้นนี้ หรือใบรับรองเป็นชุดเก่า';
@@ -367,6 +483,7 @@ async function loadLanStatus() {
     const s = await api('GET', '/api/admin/lan-status');
     lanStatusCache = s;
     const steps = lanStepsModel(s);
+    folderBtn.textContent='📁 เปิดโฟลเดอร์สำหรับเครื่องหมอ'+(ME?.demo_mode?' (ทดลอง)':'');
     document.getElementById('lanSteps').innerHTML = steps.map((st, i) =>
       `<li class="${st.cls || ''}"><span class="num">${i + 1}</span><div><div>${esc(st.title)}</div><div class="where">${esc(st.where)}</div><span class="state">${esc(st.state)}</span></div></li>`).join('');
     const HEAD = {
@@ -469,33 +586,57 @@ async function applyUpdateNow() {
   } catch (e) { toast(e.message, true); button.disabled = false; }
 }
 // ลิงก์ตัวอย่างเอกสารตามกระดาษที่เลือกในช่อง (ยังไม่ต้องกดบันทึก) — เป็น <a target=_blank> ธรรมดา ไม่เปิดหน้าต่างด้วยสคริปต์ (กติกา UI ข้อ 1)
+function syncLabelPreview() {
+ const query=new URLSearchParams();for(const [key,name]of [['layout','layout'],['width','width'],['height','height']])query.set(key,document.getElementById('s_drug_label_'+name).value);
+ document.getElementById('previewLabels').href='/print/sample/labels?'+query;
+}
 function syncPaperPreview() {
+  syncLabelPreview();
+  document.getElementById('previewMedication').href = `/print/sample/medication?paper=${encodeURIComponent(document.getElementById('s_medication_sheet_paper').value)}&font=${encodeURIComponent(document.getElementById('s_medication_sheet_font').value)}`;
   document.getElementById('previewReceipt').href = `/print/sample/receipt?paper=${encodeURIComponent(document.getElementById('s_receipt_paper').value)}&scale=${encodeURIComponent(document.getElementById('s_receipt_font_scale').value)}`;
   document.getElementById('previewAppointment').href = `/print/sample/appointment?paper=${encodeURIComponent(document.getElementById('s_appointment_paper').value)}&scale=${encodeURIComponent(document.getElementById('s_appt_font_scale').value)}`;
   document.getElementById('previewMedcert').href = `/print/sample/medcert?paper=${encodeURIComponent(document.getElementById('s_medcert_paper_size').value)}&scale=${encodeURIComponent(document.getElementById('s_medcert_font_scale').value)}`;
 }
 async function saveSettings(showToast = true) {
-  const body = {};
-  for (const k of SKEYS) { const el = document.getElementById('s_' + k); if (el) body[k] = el.value; }
-  await api('POST', '/api/settings', body);
-  if (showToast) toast('บันทึกแล้ว');
+  if (!adminReady) { const message = 'ยังโหลดการตั้งค่าไม่ครบ กรุณาเปิดหน้าใหม่ก่อนบันทึก'; toast(message, true); throw new Error(message); }
+  if (adminSaving) throw new Error('กำลังบันทึก กรุณารอสักครู่');
+  const body = adminSettingsPayload(adminSection);
+  const errorBox = document.getElementById('adminSaveError');
+  const button = document.getElementById('adminSave');
+  errorBox.textContent = '';
+  adminSaving = true; button.disabled = true; updateAdminDirty();
+  try {
+    try { await api('POST', '/api/settings', body); }
+    catch (error) {
+      // Settings assignments are idempotent. After a lost response, read back
+      // the submitted scope; do not blindly repeat a write or claim failure.
+      const actual = await api('GET', '/api/settings').catch(() => null);
+      if (!actual || !Object.entries(body).every(([k, v]) => String(actual[k] ?? '') === String(v))) throw error;
+    }
+    markAdminSaved(body);
+    if (showToast) toast('บันทึก' + ADMIN_SECTIONS[adminSection] + 'แล้ว');
+  } catch (error) {
+    errorBox.textContent = 'ยังยืนยันการบันทึกไม่ได้: ' + error.message + ' — ข้อมูลที่แก้ยังอยู่ในหน้านี้ ตรวจการเชื่อมต่อแล้วกดบันทึกอีกครั้ง';
+    toast(error.message, true);
+    throw error;
+  } finally { adminSaving = false; button.disabled = false; updateAdminDirty(); }
 }
 async function saveAndRunBackup() {
   const btn = document.getElementById('adminBackupBtn');
   const result = document.getElementById('adminBackupResult');
   const originalLabel = btn.textContent;
   btn.disabled = true;
-  btn.textContent = '⏳ กำลังบันทึกและทดสอบ...';
-  result.textContent = 'กำลังบันทึกค่าปลายทาง สร้าง snapshot และตรวจ checksum กรุณารอสักครู่';
+  btn.textContent = '⏳ กำลังสำรองข้อมูล...';
+  result.textContent = 'กำลังบันทึกตำแหน่งที่เก็บ สร้างสำเนาและตรวจความครบของไฟล์ กรุณารอสักครู่';
   try {
     await saveSettings(false);
     const r = await api('POST', '/api/backup/run', {});
     result.textContent = backupRunResultText(r);
     result.className = r.ok ? 'muted' : 'danger';
-    toast(r.ok ? 'สำรองข้อมูลสำเร็จ' : 'สำรองข้อมูลบางตำแหน่งไม่สำเร็จ', !r.ok);
+    toast(backupRunToastText(r), !r.ok);
     recoveryHealth = await api('GET', '/api/recovery/health'); renderRecoveryHealth(recoveryHealth);
   } catch (e) {
-    result.textContent = `❌ ทดสอบ Backup ไม่สำเร็จ: ${e.message}`;
+    result.textContent = `❌ สำรองข้อมูลไม่สำเร็จ: ${e.message}`;
     result.className = 'danger';
     toast(e.message, true);
   } finally {
@@ -505,22 +646,71 @@ async function saveAndRunBackup() {
 }
 
 function renderRecoveryHealth(h) {
+  document.getElementById('adminHealthText').textContent = h.headline;
   const headline = document.getElementById('recoveryHeadline');
   headline.textContent = h.headline;
   headline.style.color = h.state === 'safe' ? '#08783e' : '#9a5a00';
   const parts = [];
   parts.push(h.lastBackupAt ? `สำรองล่าสุด ${thDate(h.lastBackupAt)}` : 'ยังไม่เคยสำรองข้อมูล');
-  parts.push(h.offDeviceOk ? 'มีสำเนานอกเครื่องแล้ว' : 'ยังไม่มีสำเนานอกเครื่อง');
-  parts.push(h.kitReady ? 'มี USB กู้ฉุกเฉินแล้ว' : 'ยังไม่มี USB กู้ฉุกเฉิน');
+  if (h.externalCopyOk) parts.push('มีสำเนาในไดรฟ์/โฟลเดอร์ที่ตั้งไว้แล้ว');
+  if (h.cloudCopyOk) parts.push('คัดลอกเข้าโฟลเดอร์คลาวด์แล้ว (ยังไม่ยืนยันการอัปโหลด)');
+  if (!h.externalCopyOk && !h.cloudCopyOk) parts.push('ยังไม่มีสำเนาในปลายทางที่ตั้งไว้');
+  parts.push(h.password?.ready ? 'ตั้งรหัสสำรองแล้ว' : 'ยังไม่ได้ตั้งรหัสสำรอง');
+  if (h.password?.ready && h.passwordCopies?.some(x => !x.current)) parts.push('ยังส่งไฟล์สำหรับรหัสล่าสุดไม่ครบทุกปลายทาง — กดสำรองข้อมูลตอนนี้');
+  parts.push(h.kitReady ? 'เคยสร้าง USB กู้ฉุกเฉินเสริมแล้ว' : 'USB กู้ฉุกเฉินเสริม: ยังไม่ได้ทำ');
   parts.push(h.lastDrillAt ? `ซ้อมกู้ล่าสุด ${thDate(h.lastDrillAt)}` : 'ยังไม่เคยซ้อมกู้');
   document.getElementById('recoverySummary').textContent = parts.join(' · ');
   const btn = document.getElementById('healthActionBtn');
-  btn.textContent = h.action ? h.action.label : 'ตรวจอีกครั้ง';
+  btn.textContent = h.action ? h.action.label : 'ตรวจสถานะในเครื่องอีกครั้ง';
+  try {
+    const pending = JSON.parse(sessionStorage.getItem('recovery-password-operation') || 'null');
+    if (pending && h.password?.id === pending.op_id) {
+      document.getElementById('passwordResult').textContent = 'บันทึกรหัสของคำสั่งล่าสุดแล้ว หากการส่งสำเนายังไม่ครบ ให้กด “สำรองข้อมูลตอนนี้”';
+      document.getElementById('passwordSetup').classList.remove('hidden');
+      sessionStorage.removeItem('recovery-password-operation');
+    } else if (pending && h.password?.id && h.password.id !== pending.expected_id) {
+      sessionStorage.removeItem('recovery-password-operation');
+      document.getElementById('passwordResult').textContent = 'มีการตั้งรหัสใหม่จากอีกคำสั่งแล้ว กรุณาตรวจสถานะล่าสุด หากต้องการเปลี่ยนให้กรอกรหัสใหม่';
+    }
+  } catch {}
+}
+function openRecoveryPassword() {
+  document.getElementById('passwordSetup').classList.remove('hidden');
+  document.getElementById('recoveryPassword').focus();
+}
+async function openRecoveryHelper() {
+  try { await api('POST', '/api/recovery/open', {}); document.getElementById('adminBackupResult').textContent = 'กำลังเปิดตัวช่วยกู้ในเบราว์เซอร์ของเครื่องหลัก ถ้ายังไม่เปิด ให้ใช้ไอคอน “กู้ข้อมูลคลินิก” บนหน้าจอเครื่องหลัก'; }
+  catch (e) { document.getElementById('adminBackupResult').textContent = e.message; }
+}
+async function saveRecoveryPassword() {
+  const btn = document.getElementById('saveRecoveryPasswordBtn'), result = document.getElementById('passwordResult');
+  if (btn.disabled) return;
+  const password = document.getElementById('recoveryPassword').value, confirmation = document.getElementById('recoveryPasswordConfirm').value;
+  if (password.normalize('NFC') !== confirmation.normalize('NFC')) { result.textContent = 'รหัสทั้งสองช่องไม่ตรงกัน'; return; }
+  if ([...password.normalize('NFC')].length < 12) { result.textContent = 'ใช้รหัสอย่างน้อย 12 ตัวอักษร ใช้คำที่จำได้หลายคำหรือภาษาไทยได้'; return; }
+  let op;
+  try { op = JSON.parse(sessionStorage.getItem('recovery-password-operation') || 'null'); } catch {}
+  if (!op) { op = { op_id: crypto.randomUUID(), expected_id: recoveryHealth?.password?.id || '' }; sessionStorage.setItem('recovery-password-operation', JSON.stringify(op)); }
+  btn.disabled = true; result.textContent = 'กำลังบันทึกรหัสและส่งสำเนา กรุณารอสักครู่…';
+  try {
+    const r = await api('POST', '/api/recovery/password', { ...op, password, confirmation, pin: document.getElementById('recoveryAdminPin').value });
+    sessionStorage.removeItem('recovery-password-operation');
+    recoveryHealth = r.health; renderRecoveryHealth(recoveryHealth);
+    result.textContent = 'บันทึกรหัสแล้ว\n' + backupRunResultText(r.backup);
+    toast('บันทึกรหัสแล้ว ดูผลการส่งสำเนาด้านล่าง');
+  } catch (e) {
+    result.textContent = e.message + ' — ตรวจสถานะด้านบนก่อนตั้งใหม่ หากระบุว่าบันทึกแล้ว ให้กดสำรองข้อมูลตอนนี้';
+    try { recoveryHealth = await api('GET', '/api/recovery/health'); renderRecoveryHealth(recoveryHealth); } catch {}
+  } finally {
+    for (const id of ['recoveryPassword', 'recoveryPasswordConfirm', 'recoveryAdminPin']) document.getElementById(id).value = '';
+    btn.disabled = false;
+  }
 }
 async function runHealthAction() {
   if (!recoveryHealth || !recoveryHealth.action) { recoveryHealth = await api('GET', '/api/recovery/health'); renderRecoveryHealth(recoveryHealth); return; }
   if (recoveryHealth.action.code === 'RUN_BACKUP') return saveAndRunBackup();
   if (recoveryHealth.action.code === 'RUN_DRILL') return runRecoveryDrill();
+  if (recoveryHealth.action.code === 'SET_PASSWORD') return openRecoveryPassword();
   document.getElementById('setupWizard').classList.remove('hidden');
   await refreshRecoveryOptions();
 }
@@ -558,16 +748,19 @@ async function createRecoveryKit() {
     recoveryHealth = await api('GET', '/api/recovery/health'); renderRecoveryHealth(recoveryHealth);
   } catch (e) { toast(e.message, true); }
 }
-async function runRecoveryDrill() {
+async function runRecoveryDrill(withPassword = false) {
+  if (recoveryHealth?.password?.ready && !withPassword) { document.getElementById('passwordDrill').classList.remove('hidden'); document.getElementById('drillPassword').focus(); return; }
   const btn = document.getElementById('drillBtn'); btn.disabled = true;
+  document.getElementById('passwordDrillBtn').disabled = true;
   document.getElementById('adminBackupResult').textContent = 'กำลังซ้อมกู้และตรวจข้อมูล โดยไม่เปลี่ยนข้อมูลที่ใช้งานอยู่…';
   try {
-    const r = await api('POST', '/api/recovery/drill', {});
+    const body = withPassword ? { method: 'password', password: document.getElementById('drillPassword').value } : {};
+    const r = await api('POST', '/api/recovery/drill', body);
     document.getElementById('adminBackupResult').textContent = `✅ ซ้อมกู้สำเร็จ ข้อมูลเปิดได้ถึง ${thDate(r.backupCreatedAt)} และข้อมูลจริงไม่ได้ถูกเปลี่ยน`;
     recoveryHealth = await api('GET', '/api/recovery/health'); renderRecoveryHealth(recoveryHealth);
   } catch (e) {
     document.getElementById('adminBackupResult').textContent = `❌ ซ้อมกู้ไม่สำเร็จ: ${e.message} — ข้อมูลจริงไม่ได้ถูกเปลี่ยน`;
-  } finally { btn.disabled = false; }
+  } finally { btn.disabled = false; document.getElementById('passwordDrillBtn').disabled = false; document.getElementById('drillPassword').value = ''; }
 }
 async function addUser() {
   try {
@@ -585,6 +778,32 @@ async function addUser() {
     ['u_name', 'u_display', 'u_display_en', 'u_pass', 'u_pin', 'u_license', 'u_specialty'].forEach(x => document.getElementById(x).value = '');
     load();
   } catch (e) { toast(e.message, true); }
+}
+let frontPermissionPending = null;
+function confirmFrontPermission(id, enabled) {
+  if(frontPermissionPending?.busy)return;
+  frontPermissionPending=null;
+  const user = userRows.find(u => u.id === id);
+  if (!user) return;
+  openModal('<h2>' + (enabled ? 'เปิด' : 'ปิด') + 'สิทธิ์ทำงานหน้าร้านด้วย</h2><p>' + esc(user.display_name) + '</p><p>' + (enabled ? 'แพทย์คนนี้จะจัดการคลังยา เก็บเงิน ออก/แก้ใบเสร็จและคืนเงินได้ด้วย โดยยังใช้บัญชีแพทย์เดิม' : 'แพทย์คนนี้จะกลับไปใช้สิทธิ์แพทย์ตามปกติ งานคลังยาและเก็บเงินต้องใช้บัญชีหน้าร้าน') + '</p><p>ต้องเข้าสู่ระบบใหม่ทุกเครื่องหลังบันทึก</p><button class="btn primary" id="confirmFrontPermission" onclick="saveFrontPermission(' + id + ',' + enabled + ')">ยืนยันบันทึกสิทธิ์</button><button class="btn" onclick="closeModal()">ยกเลิก</button>');
+}
+async function saveFrontPermission(id, enabled) {
+  if (frontPermissionPending?.busy) return;
+  if(!frontPermissionPending||frontPermissionPending.id!==id||frontPermissionPending.enabled!==enabled)frontPermissionPending={id,enabled,op_id:crypto.randomUUID()};
+  frontPermissionPending.busy=true;
+  closeModal();
+  const result = document.getElementById('frontPermissionResult');
+  result.textContent = 'กำลังบันทึกสิทธิ์…';
+  try {
+    await api('PATCH', '/api/users/' + id, {front_desk: enabled,op_id:frontPermissionPending.op_id});
+    frontPermissionPending = null;
+    result.textContent = 'บันทึกสิทธิ์แล้ว ให้แพทย์เข้าสู่ระบบใหม่ เมื่อเข้าแล้วดูป้ายชื่อด้านบนว่า “แพทย์ + หน้าคลินิก”';
+    if (!enabled) result.textContent = 'ปิดสิทธิ์งานหน้าร้านแล้ว ให้แพทย์เข้าสู่ระบบใหม่';
+    toast('บันทึกสิทธิ์แล้ว'); await load();
+  } catch (e) {
+    result.textContent = e.message + ' — กดตรวจและยืนยันค่าเดิมได้ การกดซ้ำไม่เพิ่มสิทธิ์ซ้ำ';
+    const retry = document.createElement('button'); retry.id='retryFrontPermission'; retry.className='btn'; retry.textContent='ตรวจและยืนยันค่าเดิม'; retry.onclick=()=>saveFrontPermission(id,enabled); result.append(retry);
+  } finally { if (frontPermissionPending) frontPermissionPending.busy=false; }
 }
 function editDoctor(id) {
   const u = userRows.find(x => x.id === id); if (!u) return;
@@ -630,6 +849,11 @@ function importProfile(input) {
     input.value = '';
   }; rd.readAsText(file, 'utf8');
 }
+function credentialResult(result, message) {
+  closeModal();
+  if (result.reauthenticate) { location.href = '/login.html?account_changed=1'; return; }
+  toast(message + ' — ผู้ใช้นี้ต้องเข้าสู่ระบบใหม่ทุกเครื่อง');
+}
 function resetPw(id) {
   const u = userRows.find(x => x.id === id);
   openAsk({
@@ -643,7 +867,7 @@ function resetPw(id) {
       if (!v.mPw1) { toast('ใส่รหัสผ่านใหม่ก่อน', true); return; }
       if (v.mPw1 !== v.mPw2) { toast('รหัสผ่านสองช่องไม่ตรงกัน — พิมพ์ใหม่', true); return; }
       api('PATCH', `/api/users/${id}`, { password: v.mPw1 })
-        .then(() => { closeModal(); toast(`✅ เปลี่ยนรหัสผ่านของ ${u ? u.display_name : ''} สำเร็จแล้ว`); })
+        .then(result => credentialResult(result, `✅ เปลี่ยนรหัสผ่านของ ${u ? u.display_name : ''} สำเร็จแล้ว`))
         .catch(e => toast(e.message, true));
     },
   });
@@ -661,13 +885,13 @@ function resetPin(id) {
       if (!/^\d{4,6}$/.test(v.mPin1)) { toast('PIN ต้องเป็นตัวเลข 4-6 หลัก', true); return; }
       if (v.mPin1 !== v.mPin2) { toast('PIN สองช่องไม่ตรงกัน — พิมพ์ใหม่', true); return; }
       api('PATCH', `/api/users/${id}`, { pin: v.mPin1 })
-        .then(() => { closeModal(); toast(`✅ เปลี่ยน PIN ของ ${u ? u.display_name : ''} สำเร็จแล้ว`); })
+        .then(result => credentialResult(result, `✅ เปลี่ยน PIN ของ ${u ? u.display_name : ''} สำเร็จแล้ว`))
         .catch(e => toast(e.message, true));
     },
   });
 }
 function toggleUser(id, active) {
-  api('PATCH', `/api/users/${id}`, { active }).then(load).catch(e => toast(e.message, true));
+  api('PATCH', `/api/users/${id}`, { active }).then(result => { if (result.reauthenticate) location.href = '/login.html?account_changed=1'; else load(); }).catch(e => toast(e.message, true));
 }
 function markDup() {
   const hn = document.getElementById('dupHn').value.trim();
@@ -687,10 +911,14 @@ function markDupConfirm(hn, prim) {
 initPage('admin').then(me => {
   if (!me) return;
   document.getElementById('aboutVersion').textContent = me.app_version || 'ไม่ทราบรุ่น กรุณาเปิดหน้าใหม่';
-  document.getElementById('aboutCard').classList.remove('hidden');
-  if (me.role !== 'admin') { document.title = 'เกี่ยวกับโปรแกรม'; return; }
-  document.getElementById('adminControls').classList.remove('hidden');
-  load();
+  if (me.role !== 'admin') {
+    document.getElementById('aboutCard').classList.remove('hidden');
+    document.title = 'เกี่ยวกับโปรแกรม'; return;
+  }
+  setupAdminNavigation();
+  load().catch(e => {
+    document.getElementById('adminLoadError').textContent = 'โหลดการตั้งค่าไม่สำเร็จ: ' + e.message + ' — กรุณาเปิดหน้าใหม่';
+  });
 });
 </script>
 </body>

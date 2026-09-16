@@ -30,6 +30,28 @@ const PACKAGE_NAME = 'Clinic Setup';
 const UPDATE_FEED_BASE = 'https://github.com/mkungsuki/mk-artifacts/releases/latest/download/';
 function updateFeedUrl(variant) { return `${UPDATE_FEED_BASE}latest-${variant.trial ? 'trial' : 'production'}-pilot.json`; }
 const TRIAL_PACKAGE_NAME = 'Clinic ทดลอง';
+const { PAYLOAD_DIRECTORY, verifySetupPackage } = require('./verify-setup-package');
+
+function makePackageEntryCmd() { return [
+  '@echo off', 'chcp 65001 >nul', 'setlocal EnableExtensions DisableDelayedExpansion',
+  'set "CLINIC_PACKAGE_ROOT=%~dp0"',
+  'if "%CLINIC_PACKAGE_ROOT:~-1%"=="\\" set "CLINIC_PACKAGE_ROOT=%CLINIC_PACKAGE_ROOT:~0,-1%"',
+  `set "CLINIC_PACKAGE_PAYLOAD=%CLINIC_PACKAGE_ROOT%\\${PAYLOAD_DIRECTORY}"`,
+  `set "CLINIC_PACKAGE_DIRECTORY=${PAYLOAD_DIRECTORY}"`,
+  'if not exist "%CLINIC_PACKAGE_PAYLOAD%\\runtime\\node.exe" goto :badzip',
+  `"%CLINIC_PACKAGE_PAYLOAD%\\runtime\\node.exe" --no-warnings -e "const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),PAYLOAD_DIRECTORY=process.env.CLINIC_PACKAGE_DIRECTORY;try{(${verifySetupPackage.toString().replace(/\s+/g,' ')})(process.env.CLINIC_PACKAGE_ROOT)}catch(e){process.exitCode=1}"`,
+  'if errorlevel 1 goto :badzip',
+  'call "%CLINIC_PACKAGE_PAYLOAD%\\ติดตั้งระบบคลินิก.cmd" %*',
+  'exit /b %errorlevel%',
+  ':badzip',
+  'set "CLINIC_PACKAGE_ERROR=ชุดติดตั้งไม่ครบหรือเสีย กรุณากดแตกไฟล์ทั้งหมด (Extract All) จาก ZIP ใหม่ แล้วเปิดไฟล์ติดตั้งระบบคลินิกในโฟลเดอร์ที่แตกแล้ว"',
+  'if "%CLINIC_INSTALL_TEST%"=="1" (',
+  '  echo Extract All - package incomplete',
+  '  exit /b 1',
+  ')',
+  'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show($env:CLINIC_PACKAGE_ERROR,\'Clinic Offline\',\'OK\',\'Error\') | Out-Null"',
+  'exit /b 1', '',
+].join('\r\n'); }
 
 const VARIANTS = {
   production: {
@@ -128,13 +150,14 @@ function makeInstallerCmd(variant) { return [
   'rem [1/4] ตรวจว่าแตก ZIP ครบ (กันเคสเปิดไฟล์จากในหน้าต่าง ZIP โดยตรง)',
   'if not exist "%SRC%runtime\\node.exe" goto :badzip',
   'if not exist "%SRC%app\\server.js" goto :badzip',
+  'if not exist "%SRC%..\\อ่านก่อนติดตั้ง.txt" goto :badzip',
   'if exist "%SRC%app\\data\\clinic.db" (',
   '  echo ** พบฐานข้อมูลในโฟลเดอร์ชุดติดตั้ง เพราะเคยกดเปิดโปรแกรมก่อนติดตั้ง',
   '  echo    ตัวติดตั้งจะไม่คัดลอกฐานนี้ไปใช้ และจะสร้างข้อมูลเริ่มต้นใหม่ที่ปลายทาง',
   ')',
   'rem [2/4] คัดลอกโปรแกรมไปปลายทาง (ถ้ายังไม่ได้อยู่ที่นั่น)',
   'if exist "%TARGET%\\app\\data\\clinic.db" (',
-  '  echo ** พบระบบคลินิกพร้อมฐานข้อมูลอยู่แล้วที่ %TARGET%',
+  '  echo ** พบระบบคลินิกพร้อมฐานข้อมูลอยู่แล้วที่ "%TARGET%"',
   '  echo    ตัวติดตั้งนี้จะไม่เขียนทับข้อมูลเดิมเด็ดขาด — หยุดการติดตั้ง',
   '  echo    ถ้าต้องการอัปเดตโปรแกรม ให้ปรึกษาผู้ดูแลระบบ',
   '  if "%TESTMODE%"=="0" call :install_error',
@@ -144,6 +167,16 @@ function makeInstallerCmd(variant) { return [
   'if not exist "%TARGET%\\logs" mkdir "%TARGET%\\logs" 2>nul',
   '(type nul >> "%TARGET%\\logs\\install-copy.log") 2>nul || goto :need_admin',
   'if exist "%TARGET%\\app\\server.js" (type nul >> "%TARGET%\\app\\server.js") 2>nul || goto :need_admin',
+  ...(!variant.trial ? [
+    'set "CLINIC_TRANSITION_TARGET=%TARGET%"',
+    'set "CLINIC_TRANSITION_SOURCE=%SRC%"',
+    `set "CLINIC_PACKAGE_DIRECTORY=${PAYLOAD_DIRECTORY}"`,
+    `"%SRC%runtime\\node.exe" --no-warnings -e "const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),PAYLOAD_DIRECTORY=process.env.CLINIC_PACKAGE_DIRECTORY;try{(${verifySetupPackage.toString().replace(/\s+/g,' ')})(path.resolve(process.env.CLINIC_TRANSITION_SOURCE,'..'))}catch(e){process.exitCode=1}"`,
+    'if errorlevel 1 goto :badzip',
+    'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%SRC%app\\scripts\\trial-to-production.ps1"',
+    'if errorlevel 5 goto :need_admin',
+    'if errorlevel 1 exit /b 1',
+  ] : []),
   'if /i "%SRC%"=="%TARGET%\\" goto :inplace',
   'robocopy "%SRC%." "%TARGET%" /E /IS /IT /IM /R:2 /W:2 /XD "%SRC%app\\data" /NFL /NDL /NJH /NJS /TEE /LOG+:"%TARGET%\\logs\\install-copy.log"',
   'if errorlevel 8 (',
@@ -152,6 +185,14 @@ function makeInstallerCmd(variant) { return [
   '  exit /b 1',
   ')',
   ':inplace',
+  // The distribution has one readme at its root. Preserve its installed path.
+  'set "CLINIC_INSTALL_README=%SRC%..\\อ่านก่อนติดตั้ง.txt"',
+  'set "CLINIC_INSTALL_DIR=%TARGET%"',
+  '"%TARGET%\\runtime\\node.exe" --no-warnings -e "const fs=require(\'node:fs\'),path=require(\'node:path\');const source=process.env.CLINIC_INSTALL_README,target=path.join(process.env.CLINIC_INSTALL_DIR,path.basename(source));fs.copyFileSync(source,target);if(!fs.readFileSync(source).equals(fs.readFileSync(target)))process.exit(1);"',
+  'if errorlevel 1 (',
+  '  call :install_error',
+  '  exit /b 1',
+  ')',
   '"%TARGET%\\runtime\\node.exe" --no-warnings "%TARGET%\\app\\scripts\\verify-install.js" "%TARGET%"',
   'if errorlevel 1 (',
   '  call :install_error',
@@ -327,28 +368,33 @@ function makeRestartCmd(variant) { return [
 function makeShortcutsPs1(variant) { return '\uFEFF' + [
   'param(',
   '  [Parameter(Mandatory = $true)][string]$Target,',
-  "  [string]$Autostart = '0'",
+  "  [string]$Autostart = '0',",
+  '  [switch]$TestMode',
   ')',
   "$ErrorActionPreference = 'Stop'",
   "$launcher = Join-Path $Target 'เปิดระบบคลินิก.cmd'",
   'if (-not (Test-Path $launcher)) { throw "ไม่พบ $launcher" }',
-  '$ws = New-Object -ComObject WScript.Shell',
-  'function New-ClinicShortcut([string]$folder) {',
-  `  $s = $ws.CreateShortcut((Join-Path $folder '${variant.title}.lnk'))`,
-  '  $s.TargetPath = $launcher',
-  '  $s.WorkingDirectory = $Target',
-  `  $s.Description = 'เปิด${variant.title}'`,
-  '  $s.Save()',
+  "if (-not (Test-Path -LiteralPath (Join-Path $Target 'update\\installed.marker'))) { throw 'ยังไม่ได้ติดตั้งโปรแกรม กรุณาเปิดตัวติดตั้งก่อน' }",
+  'if ($TestMode) {',
+  "  if ($env:CLINIC_INSTALL_TEST -ne '1') { throw 'Test mode requires environment guard' }",
+  '  $testRoot = [IO.Path]::GetFullPath($env:CLINIC_SHORTCUT_TEST_ROOT)',
+  '  if (-not $testRoot.StartsWith([IO.Path]::GetTempPath(),[StringComparison]::OrdinalIgnoreCase)) { throw "Test path outside temp" }',
+  "  if ([IO.File]::ReadAllText((Join-Path $testRoot 'transition-test.marker')) -ne 'synthetic-transition-only') { throw 'Test marker missing' }",
+  "  $desktop = Join-Path $testRoot 'Desktop'; $startup = Join-Path $testRoot 'Startup'",
+  '  New-Item -ItemType Directory -Path $desktop,$startup -Force | Out-Null',
+  '} else {',
+  "  $desktop = [Environment]::GetFolderPath('Desktop'); $startup = [Environment]::GetFolderPath('Startup')",
   '}',
-  "New-ClinicShortcut ([Environment]::GetFolderPath('Desktop'))",
-  "if ($Autostart -eq '1') { New-ClinicShortcut ([Environment]::GetFolderPath('Startup')) }",
+  ". (Join-Path $Target 'app\\scripts\\windows-shortcuts.ps1')",
+  'function New-ClinicShortcut([string]$folder) {',
+  `  [ClinicUnicodeShortcut]::Create((Join-Path $folder '${variant.title}.lnk'),$launcher,'',$Target)`,
+  '}',
+  'New-ClinicShortcut $desktop',
+  `  [ClinicUnicodeShortcut]::Create((Join-Path $desktop '${variant.trial ? 'กู้ข้อมูลคลินิก (ทดลอง)' : 'กู้ข้อมูลคลินิก'}.lnk'),(Join-Path $Target 'runtime\\node.exe'),('--no-warnings ' + [char]34 + (Join-Path $Target 'app\\launch\\recovery.js') + [char]34),$Target)`,
+  "if ($Autostart -eq '1') { New-ClinicShortcut $startup }",
   '# ทางลัดสำรองสำหรับตั้งค่าเครื่องห้องตรวจ "ทีหลัง" — ทางหลักคือปุ่มในหน้า Admin (การ์ด "เครื่องห้องตรวจ")',
   '# (2026-08-16: ตัวช่วยเคยมีแต่ตอนติดตั้ง/ไฟล์ใน C:\\clinic* ที่ผู้ใช้ไม่เข้าไปหา → เจ้าของกดตัวในโฟลเดอร์ ZIP แทน)',
-  `$lan = $ws.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) '${variant.trial ? 'ตั้งค่าเครื่องห้องตรวจ (ทดลอง)' : 'ตั้งค่าเครื่องห้องตรวจ'}.lnk'))`,
-  `$lan.TargetPath = (Join-Path $Target '${variant.lanSetupCmd}')`,
-  '$lan.WorkingDirectory = $Target',
-  "$lan.Description = 'เชื่อมคอมพิวเตอร์ห้องตรวจเข้ากับระบบคลินิก (HTTPS) — กดได้ทุกเมื่อ'",
-  '$lan.Save()',
+  `[ClinicUnicodeShortcut]::Create((Join-Path $desktop '${variant.trial ? 'ตั้งค่าเครื่องห้องตรวจ (ทดลอง)' : 'ตั้งค่าเครื่องห้องตรวจ'}.lnk'),(Join-Path $Target '${variant.lanSetupCmd}'),'',$Target)`,
   '',
 ].join(CRLF); }
 
@@ -618,7 +664,7 @@ function makeLanSetupPs1(variant) { return '﻿' + [
   '}',
   '',
   'if ([string]::IsNullOrWhiteSpace($OutputDir)) {',
-  "  $OutputDir = Join-Path ([Environment]::GetFolderPath('Desktop')) 'ส่งไปเครื่องหมอ'",
+  `  $OutputDir = Join-Path ([Environment]::GetFolderPath('Desktop')) '${variant.trial ? 'ส่งไปเครื่องหมอ (ทดลอง)' : 'ส่งไปเครื่องหมอ'}'`,
   '}',
   'New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null',
   '$url = "https://${ip}:${httpsPort}/"',
@@ -631,12 +677,12 @@ function makeLanSetupPs1(variant) { return '﻿' + [
   "  'if \"%PKG:~-1%\"==\"\\\" set \"PKG=%PKG:~0,-1%\"',",
   "  'set \"CLINIC_CER=%PKG%\\clinic.cer\"',",
   "  'set \"CLINIC_MSG_TITLE=ระบบคลินิก - ติดตั้งใบรับรอง\"',",
-  "  'set \"CLINIC_MSG_OK=ติดตั้งใบรับรองแล้ว - เปิดทางลัด เปิดระบบคลินิก (ห้องหมอ) ได้เลย ที่อยู่ต้องขึ้นต้นด้วย https และไม่มีคำเตือน\"',",
+  `  'set "CLINIC_MSG_OK=ติดตั้งใบรับรองแล้ว - เปิดทางลัด เปิดระบบคลินิก (ห้องหมอ${variant.trial?' ทดลอง':''}) ได้เลย ที่อยู่ต้องขึ้นต้นด้วย https และไม่มีคำเตือน"',`,
   "  'set \"CLINIC_MSG_FAIL=ติดตั้งใบรับรองไม่สำเร็จ - ลองดับเบิลคลิกใหม่ แล้วกด Yes เมื่อ Windows ถามยืนยัน\"',",
   "  'echo กำลังติดตั้งใบรับรองความปลอดภัยของระบบคลินิกลงเครื่องนี้ (Windows จะถามยืนยัน กรุณากด Yes)',",
   "  'powershell -NoProfile -ExecutionPolicy Bypass -Command \"Import-Certificate -FilePath $env:CLINIC_CER -CertStoreLocation Cert:\\CurrentUser\\Root | Out-Null\"',",
   "  'if errorlevel 1 goto :fail',",
-  "  'echo ติดตั้งใบรับรองแล้ว — เปิดทางลัด เปิดระบบคลินิก (ห้องหมอ) ได้เลย',",
+  `  'echo ติดตั้งใบรับรองแล้ว — เปิดทางลัด เปิดระบบคลินิก (ห้องหมอ${variant.trial?' ทดลอง':''}) ได้เลย',`,
   "  'rem ผลลัพธ์ขึ้นเป็นกล่องของ Windows ด้วย — หน้าต่างดำบางเครื่องแสดงไทยแตกจนอ่านไม่ออก (ข้อความส่งผ่าน env ไม่ฝังในคำสั่ง)',",
   "  'powershell -NoProfile -ExecutionPolicy Bypass -Command \"Add-Type -AssemblyName System.Windows.Forms; [void][System.Windows.Forms.MessageBox]::Show($env:CLINIC_MSG_OK, $env:CLINIC_MSG_TITLE, ''OK'', ''Information'')\"',",
   "  'exit /b 0',",
@@ -647,7 +693,7 @@ function makeLanSetupPs1(variant) { return '﻿' + [
   "  'exit /b 1'",
   ') -join \"`r`n\"',
   '[IO.File]::WriteAllText($installCert, $installCertBody + "`r`n", (New-Object System.Text.UTF8Encoding($false)))',
-  "$shortcut = Join-Path $OutputDir 'เปิดระบบคลินิก (ห้องหมอ).url'",
+  `$shortcut = Join-Path $OutputDir '${variant.trial ? 'เปิดระบบคลินิก (ห้องหมอ ทดลอง).url' : 'เปิดระบบคลินิก (ห้องหมอ).url'}'`,
   "@('[InternetShortcut]', ('URL=' + $url), 'IconIndex=0') | Set-Content -LiteralPath $shortcut -Encoding ASCII",
   "$instructions = Join-Path $OutputDir 'อ่านก่อนเปิด.txt'",
   '@(',
@@ -656,7 +702,7 @@ function makeLanSetupPs1(variant) { return '﻿' + [
   "  '1. ดับเบิลคลิก ติดตั้งใบรับรอง (เครื่องห้องตรวจ) แล้วกด Yes เมื่อ Windows ถาม (ทำครั้งเดียว)'",
   "  '   ถ้าดาวน์โหลดโฟลเดอร์นี้จากอินเทอร์เน็ต แล้ว Windows ขึ้นกล่องสีฟ้า: กด More info ตรวจชื่อไฟล์ แล้วกด Run anyway (ทาง USB มักไม่ขึ้น)'",
   "  '2. ให้เครื่องหน้าร้านเปิดอยู่ และทั้งสองเครื่องต่อ Wi-Fi/สาย LAN วงเดียวกัน'",
-  "  '3. ดับเบิลคลิก เปิดระบบคลินิก (ห้องหมอ) — ที่อยู่ขึ้นต้นด้วย https การเชื่อมต่อเข้ารหัสแล้ว'",
+  `  '3. ดับเบิลคลิก เปิดระบบคลินิก (ห้องหมอ${variant.trial?' ทดลอง':''}) — ที่อยู่ขึ้นต้นด้วย https การเชื่อมต่อเข้ารหัสแล้ว'`,
   `  '4. เข้าด้วยบัญชีแพทย์${variant.trial ? ' (ชุดทดลอง: doctor / doctor123)' : 'ที่ผู้ดูแลตั้งให้'}'`,
   "  ''",
   "  'ถ้าเบราว์เซอร์เตือนว่าไม่ปลอดภัย: ยังไม่ได้ทำข้อ 1 หรือเครื่องหน้าร้านเพิ่งเปลี่ยนเลขที่อยู่ — ให้รัน ตั้งค่าใช้สองเครื่อง ที่เครื่องหน้าร้านอีกครั้ง แล้วนำโฟลเดอร์นี้มาทำข้อ 1 ใหม่'",
@@ -669,7 +715,7 @@ function makeLanSetupPs1(variant) { return '﻿' + [
   '# บันทึกผลการตั้งค่าให้หน้า Admin (การ์ด "เครื่องห้องตรวจ") อ่านสถานะได้ — ไม่มีความลับในไฟล์นี้',
   '$setupThumb = $null',
   "try { $setupThumb = (Get-Content -LiteralPath $infoFile -Raw -Encoding UTF8 | ConvertFrom-Json).thumbprint } catch { }",
-  '$setupInfo = @{ format = 1; url = $url; ip = $ip; https_port = $httpsPort; output_dir = $OutputDir; rule_name = $ruleName; target = $Target;',
+  '$setupInfo = @{ format = 1; url = $url; ip = $ip; https_port = $httpsPort; output_dir = $OutputDir; shortcut_name = [IO.Path]::GetFileName($shortcut); rule_name = $ruleName; target = $Target;',
   "  thumbprint = $setupThumb; at = (Get-Date).ToString('o'); test_mode = [bool]$TestMode } | ConvertTo-Json -Compress",
   "[IO.File]::WriteAllText((Join-Path $certDir 'lan-setup.json'), $setupInfo, (New-Object System.Text.UTF8Encoding($false)))",
   '',
@@ -688,7 +734,7 @@ function makeLanSetupPs1(variant) { return '﻿' + [
   "    'ลิงก์เครื่องห้องตรวจ: ' + $url,",
   "    'โฟลเดอร์ที่ต้องส่งไปเครื่องห้องตรวจ: ' + $OutputDir,",
   "    '',",
-  "    'ที่เครื่องห้องตรวจ: ดับเบิลคลิก ติดตั้งใบรับรอง (เครื่องห้องตรวจ) ครั้งเดียว แล้วเปิดทางลัด เปิดระบบคลินิก (ห้องหมอ) — ไม่ต้องติดตั้งโปรแกรม'",
+  `    'ที่เครื่องห้องตรวจ: ดับเบิลคลิก ติดตั้งใบรับรอง (เครื่องห้องตรวจ) ครั้งเดียว แล้วเปิดทางลัด เปิดระบบคลินิก (ห้องหมอ${variant.trial?' ทดลอง':''}) — ไม่ต้องติดตั้งโปรแกรม'`,
   '  ) -join "`r`n"',
   "  [void](Show-ClinicBox $done 'info')",
   '}',
@@ -750,7 +796,8 @@ function makeReadmeTxt(variant) { return [
   '',
   'วิธีติดตั้ง:',
   '  1. คลิกขวาไฟล์ ZIP > Extract All (แตกไฟล์ทั้งหมด)',
-  '  2. เปิดโฟลเดอร์ที่แตกออกมา แล้วดับเบิลคลิก "ติดตั้งระบบคลินิก"',
+  '  2. เปิดโฟลเดอร์ที่แตกออกมา จะเห็น 3 รายการ: ติดตั้งระบบคลินิก.cmd, อ่านก่อนติดตั้ง.txt และโฟลเดอร์ชุดโปรแกรม',
+  '     ดับเบิลคลิก ติดตั้งระบบคลินิก.cmd (ไฟล์เดียวที่ต้องกด) โฟลเดอร์ "ชุดโปรแกรม (ไม่ต้องเปิด)" ไม่ต้องเปิด',
   '  3. ทำตามข้อความบนจอจนขึ้นว่า "ติดตั้งเสร็จแล้ว"',
   `  โปรแกรมจะติดตั้งที่ ${variant.target} และเปิดหน้าโปรแกรมให้เอง`,
   '',
@@ -761,16 +808,17 @@ function makeReadmeTxt(variant) { return [
     '  - เปิดครั้งต่อไป: ดับเบิลคลิกไอคอน "ระบบคลินิก (ทดลอง)" บนหน้าจอ',
     '  - ถ้าจะทดลองสองเครื่อง (ทำทีหลังได้ทุกเมื่อ): ที่เครื่องหน้าร้าน เข้าระบบด้วย admin → หน้า "ตั้งค่า"',
     '    → การ์ด "เครื่องห้องตรวจ" → กด "ตั้งค่าเครื่องห้องตรวจ" (หรือไอคอน "ตั้งค่าเครื่องห้องตรวจ (ทดลอง)" บน Desktop)',
-    '    ทำตามกล่องจนขึ้น "สำเร็จ" → นำโฟลเดอร์ "ส่งไปเครื่องหมอ" บน Desktop ไปที่เครื่องหมอ — เครื่องหมอไม่ต้องติดตั้งโปรแกรม',
+    '    ทำตามกล่องจนขึ้น "สำเร็จ" → นำโฟลเดอร์ "ส่งไปเครื่องหมอ (ทดลอง)" บน Desktop ไปที่เครื่องหมอ — เครื่องหมอไม่ต้องติดตั้งโปรแกรม',
     '    แค่ดับเบิลคลิก "ติดตั้งใบรับรอง (เครื่องห้องตรวจ)" กด Yes ครั้งเดียว แล้วเปิดทางลัด (การเชื่อมต่อเข้ารหัส https)',
     '    การ์ดในหน้าตั้งค่าจะบอกด้วยว่าตอนนี้เชื่อมอยู่ไหม และเมื่อไหร่ต้องส่งใบรับรองใหม่ (เช่น เปลี่ยน Wi-Fi/เราเตอร์)',
     '',
     'สิ่งสำคัญที่ควรรู้:',
-    '  - ชุดทดลองกับตัวจริงอยู่คนละบ้าน จึงเปิดพร้อมกันได้และข้อมูลไม่ปนกัน',
+    '  - เมื่อฝึกพร้อมแล้ว เปิดตัวติดตั้งชุดจริง จะถามยืนยันลบชุดทดลองและข้อมูลฝึกก่อนเริ่มฐานจริงใหม่ กด ไม่ใช่ เพื่อยกเลิกหากยังต้องเก็บข้อมูล',
     '  - ตัวทดลองเปิดที่เลขทางเข้า 8081 ส่วนตัวจริงใช้เลข 8080 คุณไม่ต้องจำเลขนี้ ใช้ไอคอนบนหน้าจอก็พอ',
     '  - แถบสีเหลืองด้านบนจะบอกเสมอว่านี่คือข้อมูลทดลอง ห้ามใช้รับคนไข้จริง',
     '  - เล่นผิดหรือลองจนข้อมูลเละได้ ลบชุดทดลองแล้วติดตั้งใหม่ก็เริ่มต้นได้อีกครั้ง',
   ] : [
+    '  - ถ้าพบชุดทดลองเดิม จะถามยืนยันลบชุดทดลองและข้อมูลที่เคยกรอกทั้งหมด ไม่ย้ายข้อมูลฝึกเข้าตัวจริง กด ไม่ใช่ เพื่อยกเลิก',
     '  - เข้าระบบครั้งแรกด้วยชื่อผู้ใช้ admin (รหัสผ่านเริ่มต้นแสดงบนจอตอนติดตั้ง)',
     '  - สิ่งแรกที่ต้องทำคือเปลี่ยนรหัสผ่าน แล้วตั้งชื่อคลินิก',
     '  - เปิดโปรแกรมครั้งต่อไป: ดับเบิลคลิกไอคอน "ระบบคลินิก" บนหน้าจอ',
@@ -854,7 +902,7 @@ function buildInstaller(options = {}) {
   removeTreeSync(packageRoot);
   fs.mkdirSync(packageRoot, { recursive: true });
 
-  const runtimePath = path.resolve(options.runtimePath || process.execPath);
+  const runtimePath = require('../lib/runtime').verify(path.resolve(options.runtimePath || require('../lib/runtime').pinned(APP_ROOT)));
   const inventory = [];
   copyFileVerified(runtimePath, path.join(packageRoot, 'runtime', 'node.exe'), inventory, 'runtime/node.exe');
   copyFileVerified(path.join(REPO_ROOT, 'LICENSE'), path.join(packageRoot, 'LICENSE'), inventory, 'LICENSE');
@@ -908,12 +956,25 @@ function buildInstaller(options = {}) {
     httpsPort: variant.httpsPort,
     createdAt: new Date().toISOString(),
     appVersion,
-    nodeVersion: process.version,
+    nodeVersion: 'v' + require('../lib/runtime').VERSION,
     files: inventory,
   };
   write('setup-manifest.json', JSON.stringify(manifest, null, 2));
 
   assertPackageClean(packageRoot, variant);
+
+  // Keep the installed image exactly flat; only the distribution envelope changes.
+  const payloadRoot=path.join(packageRoot,PAYLOAD_DIRECTORY);
+  if(path.dirname(payloadRoot)!==packageRoot)throw new Error('ปลายทางชุดโปรแกรมไม่ถูกต้อง');
+  const flatNames=fs.readdirSync(packageRoot);
+  fs.mkdirSync(payloadRoot);
+  for(const name of flatNames)if(name!=='อ่านก่อนติดตั้ง.txt')fs.renameSync(path.join(packageRoot,name),path.join(payloadRoot,name));
+  fs.writeFileSync(path.join(packageRoot,'ติดตั้งระบบคลินิก.cmd'),makePackageEntryCmd());
+  const packageFiles=[];
+  function transport(dir){for(const entry of fs.readdirSync(dir,{withFileTypes:true})){const full=path.join(dir,entry.name);if(entry.isDirectory())transport(full);else if(full!==path.join(payloadRoot,'setup-manifest.json'))packageFiles.push({file:path.relative(packageRoot,full).replace(/\\/g,'/'),bytes:fs.statSync(full).size,sha256:sha256(full)});}}
+  transport(packageRoot);
+  manifest.packageFiles=packageFiles;manifest.payloadDirectory=PAYLOAD_DIRECTORY;
+  fs.writeFileSync(path.join(payloadRoot,'setup-manifest.json'),JSON.stringify(manifest,null,2));
 
   let zipFile = null;
   if (!options.noZip) {
@@ -925,8 +986,8 @@ function buildInstaller(options = {}) {
     if (fs.existsSync(zipFile)) fs.rmSync(zipFile);
     writeZip(zipFile, packageRoot, variant.packageName);
   }
-  return { ok: true, packageRoot, zipFile, files: inventory.length, appVersion,
-    nodeVersion: process.version, trial: variant.trial, packageName: variant.packageName,
+  return { ok: true, packageRoot, payloadRoot, zipFile, files: inventory.length, appVersion,
+    nodeVersion: 'v' + require('../lib/runtime').VERSION, trial: variant.trial, packageName: variant.packageName,
     installTarget: variant.target, port: variant.port };
 }
 
@@ -945,7 +1006,7 @@ if (require.main === module) {
   console.log(result.zipFile ? `ZIP: ${result.zipFile}` : 'ZIP: ไม่ได้สร้าง');
 }
 
-module.exports = { buildInstaller, PACKAGE_NAME, TRIAL_PACKAGE_NAME, DOCUMENT_FILES,
+module.exports = { buildInstaller, PACKAGE_NAME, TRIAL_PACKAGE_NAME, DOCUMENT_FILES, PAYLOAD_DIRECTORY,
   consoleUtf8Ps1,
   // ใช้ร่วมกับ tools/build-hotfix.js (ชุดอัปเดตทับสำหรับเครื่องที่ติดตั้งแล้ว) เพื่อไม่ให้ allowlist/ZIP writer แยกทาง
   VARIANTS, CRLF, removeTreeSync, copyFileVerified, copyDirectoryAllowlist, writeZip };

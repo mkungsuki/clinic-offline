@@ -114,7 +114,7 @@ async function collect({ certDir, installRoot, httpsPort, httpsListening, host }
     cert: info ? { san_ips: sanIps, days_left: daysLeft, not_after: info.not_after || null, thumbprint: info.thumbprint || null } : null,
     cert_covers_current_ip: certCoversCurrent,
     covered_ips: coveredIps,
-    setup: setup ? { at: setup.at || null, ip: setup.ip || null, url: setup.url || null, output_dir: outputDir, output_dir_missing: !!setup.output_dir && !outputDir, rule_name: setup.rule_name || null } : null,
+    setup: setup ? { at: setup.at || null, ip: setup.ip || null, url: setup.url || null, output_dir: outputDir, shortcut_name: setup.shortcut_name || null, output_dir_missing: !!setup.output_dir && !outputDir, rule_name: setup.rule_name || null } : null,
     firewall: { ...firewall, ok: firewallOk, expected_program: process.execPath },
     step1_done: step1Done,
     headline,
@@ -136,7 +136,7 @@ function launchHelper(installRoot) {
 }
 
 function openFolder(dir) {
-  if (!dir || !fs.existsSync(dir)) throw Object.assign(new Error('ยังไม่มีโฟลเดอร์ "ส่งไปเครื่องหมอ" — กดตั้งค่าเครื่องห้องตรวจก่อน'), { status: 404 });
+  if (!dir || !fs.existsSync(dir)) throw Object.assign(new Error('ยังไม่มีโฟลเดอร์สำหรับส่งไปเครื่องหมอ — กดตั้งค่าเครื่องห้องตรวจก่อน'), { status: 404 });
   const child = spawn('explorer.exe', [dir], { detached: true, stdio: 'ignore', windowsHide: false });
   child.unref();
   return dir;

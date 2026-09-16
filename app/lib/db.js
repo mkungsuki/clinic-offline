@@ -268,6 +268,28 @@ BEGIN SELECT RAISE(ABORT, 'append-only: access_log cannot be deleted'); END;
     db.exec('CREATE INDEX ix_drug_lots_active ON drug_lots(drug_id, cleared_at)');
     db.exec('ALTER TABLE drugs ADD COLUMN expiry_warn_days INTEGER');
   }
+  // v14: append-only appointment/contact history; old attendance remains unknown.
+  if (v < 14) db.exec(`
+CREATE TABLE appointment_events (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ appointment_id INTEGER NOT NULL REFERENCES appointments(id),
+ kind TEXT NOT NULL CHECK(kind IN ('created','attendance','contact','reschedule','cancel')),
+ outcome TEXT,note TEXT,previous_date TEXT,appointment_date TEXT,
+ created_by INTEGER REFERENCES users(id),created_at TEXT NOT NULL
+);
+CREATE INDEX ix_appointment_events ON appointment_events(appointment_id,id);
+CREATE TRIGGER appointment_events_no_update BEFORE UPDATE ON appointment_events BEGIN SELECT RAISE(ABORT,'append-only: appointment_events cannot be updated'); END;
+CREATE TRIGGER appointment_events_no_delete BEFORE DELETE ON appointment_events BEGIN SELECT RAISE(ABORT,'append-only: appointment_events cannot be deleted'); END;
+`);
+  // v15: old rows stay NULL; never infer a requested doctor from the examiner.
+  if (v < 15) db.exec(`
+ALTER TABLE appointments ADD COLUMN doctor_id INTEGER REFERENCES users(id);
+ALTER TABLE visits ADD COLUMN preferred_doctor_id INTEGER REFERENCES users(id);
+`);
+  // v16: unknown service costs remain NULL, including every historical receipt.
+  if (v < 16) db.exec('ALTER TABLE services ADD COLUMN cost REAL CHECK(cost IS NULL OR cost >= 0)');
+  // Keep all legacy instructions unchanged; never infer a numeric dose from prose.
+  if (v < 17) db.exec('ALTER TABLE drugs ADD COLUMN default_dose_json TEXT');
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 }
 
