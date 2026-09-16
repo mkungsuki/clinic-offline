@@ -37,6 +37,7 @@ function daily(date) {
     FROM receipt_lines rl JOIN receipts r ON r.receipt_no = rl.receipt_no
     WHERE r.status = 'ISSUED' AND r.created_at BETWEEN ? AND ? GROUP BY rl.line_type`).all(d0, d1);
   applyDirectCosts(money, cogs);
+  money.unknown_cost_items = unknownCostItems(d0, d1);
   // คุณภาพข้อมูล: visit ที่ note ว่าง (plan §2 อนุญาตแต่ต้องโชว์ในรายงานปิดวัน)
   const emptyNotes = db.prepare(`
     SELECT v.id, v.queue_no, p.first_name, p.last_name FROM visits v
@@ -89,9 +90,20 @@ function monthlyLedger(year) {
       discount: sum('discount'), drug_amount: sum('drug_amount'), service_amount: sum('service_amount'),
       drug_cost: sum('drug_cost'), service_cost: sum('service_cost'), direct_cost: sum('direct_cost'),
       gross_profit: sum('unknown_cost_lines') ? null : sum('gross_profit'), unknown_cost_lines: sum('unknown_cost_lines'),
-      unknown_drug_cost_lines: sum('unknown_drug_cost_lines'), unknown_service_cost_lines: sum('unknown_service_cost_lines') },
+      unknown_drug_cost_lines: sum('unknown_drug_cost_lines'), unknown_service_cost_lines: sum('unknown_service_cost_lines'),
+      unknown_cost_items: unknownCostItems(y0, y1) },
     half1: Math.round(months.filter(m => Number(m.month.slice(5)) <= 6).reduce((s, m) => s + m.total, 0) * 100) / 100,
   };
+}
+
+// Names come from immutable receipt lines, never the current catalog. This only
+// identifies missing costs; changing a catalog must not rewrite historical data.
+function unknownCostItems(start, end) {
+  return db.prepare(`
+    SELECT rl.line_type, rl.name, COUNT(*) lines
+    FROM receipts r JOIN receipt_lines rl ON rl.receipt_no = r.receipt_no
+    WHERE r.status = 'ISSUED' AND r.created_at BETWEEN ? AND ? AND rl.cost_each IS NULL
+    GROUP BY rl.line_type, rl.name ORDER BY rl.line_type, rl.name`).all(start, end);
 }
 
 function applyDirectCosts(money, rows) {

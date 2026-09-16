@@ -13,6 +13,12 @@ function pay(lines,extra={}){
  const done=visits.finishExam(v.id,{note:{cc:'สังเคราะห์'},lines,baseVersionId:null},doctor);
  return billing.pay(v.id,{orderVersionId:done.order.id,payMethod:'cash',userId:front,...extra});
 }
+function payAt(dateTime,lines){
+ const RealDate=Date,instant=new RealDate(dateTime).getTime();
+ global.Date=class extends RealDate{constructor(...args){super(...(args.length?args:[instant]));}static now(){return instant;}};
+ try{return pay(lines);}finally{global.Date=RealDate;}
+}
+const costItems=money=>money.unknown_cost_items.map(item=>({...item}));
 try{
  test('300 service with 120 direct cost leaves 180, not 300',()=>{
   const id=stock.upsertService({name:'หัตถการสังเคราะห์',price:300,cost:120});
@@ -72,6 +78,50 @@ try{
   assert.equal(JSON.stringify(billing.getReceipt(p.receiptNo).lines),before);
   assert.equal(billing.getReceipt(re.receiptNo).lines[0].cost_each,120);
   assert.equal(billing.getReceipt(p.receiptNo).status,'VOID');
+ });
+ const missingName='ชื่อซ้ำต้นทุนสังเคราะห์';let missingService,missingDrug,firstMissingReceipt;
+ test('unknown item lists group snapshot name and category, count lines, and omit known zero',()=>{
+  missingService=stock.upsertService({name:missingName,price:20});
+  missingDrug=stock.upsertDrug({name:missingName,unit:'เม็ด',price:2});
+  const zeroService=stock.upsertService({name:'ต้นทุนศูนย์ที่ทราบสังเคราะห์',price:10,cost:0});
+  const zeroDrug=stock.upsertDrug({name:'ยาทุนศูนย์ที่ทราบสังเคราะห์',unit:'เม็ด',price:2,cost:0});
+  firstMissingReceipt=pay([{type:'service',ref_id:missingService,qty:3},{type:'drug',ref_id:missingDrug,qty:5},
+   {type:'service',ref_id:zeroService,qty:1},{type:'drug',ref_id:zeroDrug,qty:2}]);
+  pay([{type:'service',ref_id:missingService,qty:2}]);
+  for(const money of [reports.daily(today()).money,reports.monthlyLedger(Number(today().slice(0,4))).total]){
+   const items=costItems(money);
+   assert.deepEqual(items.filter(i=>i.name===missingName),[
+    {line_type:'drug',name:missingName,lines:1},{line_type:'service',name:missingName,lines:2}]);
+   assert(!items.some(i=>i.name.includes('ทุนศูนย์')));
+   assert.equal(items.reduce((n,i)=>n+i.lines,0),money.unknown_cost_lines);
+   assert(items.every(i=>Object.keys(i).sort().join(',')==='line_type,lines,name'),'no patient or receipt fields in item list');
+  }
+ });
+ test('changing catalog name and cost cannot rewrite unknown snapshot item lists',()=>{
+  const beforeDay=costItems(reports.daily(today()).money);
+  const beforeYear=costItems(reports.monthlyLedger(Number(today().slice(0,4))).total);
+  stock.upsertService({name:'ชื่อบริการเปลี่ยนแล้วสังเคราะห์',cost:5},missingService);
+  stock.upsertDrug({name:'ชื่อยาเปลี่ยนแล้วสังเคราะห์',unit:'เม็ด',price:2,cost:1},missingDrug);
+  assert.deepEqual(costItems(reports.daily(today()).money),beforeDay);
+  assert.deepEqual(costItems(reports.monthlyLedger(Number(today().slice(0,4))).total),beforeYear);
+ });
+ test('voided receipts are excluded from daily and annual unknown item counts',()=>{
+  billing.refund(firstMissingReceipt.receiptNo,{reason:'สังเคราะห์',returnedStock:false,userId:front});
+  for(const money of [reports.daily(today()).money,reports.monthlyLedger(Number(today().slice(0,4))).total]){
+   assert.deepEqual(costItems(money).filter(i=>i.name===missingName),[{line_type:'service',name:missingName,lines:1}]);
+   assert.equal(costItems(money).reduce((n,i)=>n+i.lines,0),money.unknown_cost_lines);
+  }
+ });
+ test('unknown snapshot names and counts are restricted to requested date and year',()=>{
+  const year=Number(today().slice(0,4))-2,name='ข้ามช่วงรายงานสังเคราะห์';
+  const id=stock.upsertService({name,price:10});
+  const lines=[{type:'service',ref_id:id,qty:3}];
+  for(const instant of [`${year-1}-12-31T23:59:59`,`${year}-01-01T00:00:00`,`${year}-01-02T12:00:00`,`${year+1}-01-01T00:00:00`])payAt(instant,lines);
+  assert.deepEqual(costItems(reports.daily(`${year}-01-01`).money),[{line_type:'service',name,lines:1}]);
+  assert.deepEqual(costItems(reports.monthlyLedger(year).total),[{line_type:'service',name,lines:2}]);
+  assert.deepEqual(costItems(reports.monthlyLedger(year-1).total),[{line_type:'service',name,lines:1}]);
+  assert.deepEqual(costItems(reports.daily(`${year}-01-03`).money),[]);
+  assert.deepEqual(costItems(reports.monthlyLedger(year-2).total),[]);
  });
  test('schema15 migration leaves old service costs/receipt snapshots unknown',()=>{
   const {spawnSync}=require('node:child_process');

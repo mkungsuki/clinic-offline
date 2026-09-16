@@ -199,7 +199,7 @@ function historicalVisit(profile, monthNo) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     insertLine.run(receiptNo, 'drug', drug.id, drug.name, qty, drug.unit, drug.price,
       Math.round(drug.price * qty * 100) / 100, drug.default_instructions || null, drug.cost ?? null, drug.code || null);
-    insertLine.run(receiptNo, 'service', service.id, service.name, 1, 'ครั้ง', service.price, service.price, null, null, null);
+    insertLine.run(receiptNo, 'service', service.id, service.name, 1, 'ครั้ง', service.price, service.price, null, service.cost ?? null, null);
     db.prepare(`INSERT INTO stock_movements (drug_id, type, qty, ref, reason, created_by, created_at)
       VALUES (?, 'dispense', ?, ?, NULL, ?, ?)`).run(drug.id, -qty, receiptNo, FRONT, when);
     db.prepare('UPDATE drugs SET qty_on_hand = ROUND(qty_on_hand - ?, 3) WHERE id = ?').run(qty, drug.id);

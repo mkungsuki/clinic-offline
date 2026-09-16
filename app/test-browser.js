@@ -488,15 +488,19 @@ async function verifyMonthlyDrugs(tab, origin, viewport) {
   await waitExpression(tab, `!!document.querySelector('#drugMonthDetails') && ME`, 'รายงานยายังไม่พร้อม');
   await evaluate(tab, `(() => { document.querySelector('#drugMonthDetails summary').click(); return true; })()`, true);
   await waitExpression(tab, `document.querySelector('#drugMonthTable tbody tr') && document.querySelector('#drugMonthStatus').textContent.includes('ข้อมูล ณ')`, 'เปิดรายงานแล้วต้องเห็นตารางและเวลาข้อมูล');
-  await waitExpression(tab, `document.querySelector('#drugSummary').textContent.includes('ข้อมูลทุนไม่ครบ') && document.querySelector('#cards').textContent.includes('ยังคำนวณไม่ได้')`, 'รายงานเดิมต้องไม่แสดงกำไรจากทุนที่ขาดเป็นศูนย์');
+  await waitExpression(tab, `document.querySelector('#drugCostNote')?.textContent.trim() && document.querySelector('#dailyCostNote')?.textContent.trim() && document.querySelector('#cards .cost-unavailable') && document.querySelector('#drugMonthCostNote')?.textContent.trim()`, 'รายงานต้องอธิบายทุนที่ขาดหนึ่งครั้งและไม่เดาส่วนต่างเป็นศูนย์');
   const values = await evaluate(tab, `(() => {
     const rows=[...document.querySelectorAll('#drugMonthTable tbody tr')];
     const known=rows.find(r=>r.innerText.includes('ยาสังเคราะห์รายงาน A'));
     const unknown=rows.find(r=>r.innerText.includes('ยาสังเคราะห์รายงาน B'));
     return { known:known?[...known.cells].slice(1,7).map(c=>c.textContent):null,
-      unknown:unknown&&unknown.innerText.includes('ข้อมูลต้นทุนไม่ครบ')&&unknown.cells[6].textContent==='ต้องตรวจ' };
+      unknown:unknown&&unknown.cells[5].textContent==='—'&&unknown.cells[6].textContent==='—'&&[...unknown.querySelectorAll('.cost-unavailable')].every(n=>n.getAttribute('aria-label')),
+      noSpam:!document.querySelector('#drugMonthTable').innerText.match(/ข้อมูลต้นทุนไม่ครบ|ทุนไม่ครบ|ยังคำนวณไม่ได้/),
+      note:document.querySelector('#drugMonthCostNote').innerText,
+      links:[...document.querySelectorAll('#drugMonthCostNote a')].map(a=>a.getAttribute('href')) };
   })()`);
-  if (JSON.stringify(values.known)!==JSON.stringify(['10','100.00','10.00','90.00','20.00','70.00']) || !values.unknown) throw new Error('ยอดยา/ส่วนลด/ต้นทุน/กำไรหรือคำเตือนทุนขาดบนจอไม่ตรงบิลสังเคราะห์');
+  if (JSON.stringify(values.known)!==JSON.stringify(['10','100.00','10.00','90.00','20.00','70.00']) || !values.unknown || !values.noSpam) throw new Error('ยอดยา/ส่วนลด/ต้นทุน/ส่วนต่างหรือเครื่องหมายทุนขาดบนจอไม่ตรงบิลสังเคราะห์');
+  if (!/ยา\s*1(?:\s|รายการ)/.test(values.note) || values.links.length!==1 || !['/stock.html','/stock.html#drugTable'].includes(values.links[0])) throw new Error('คำอธิบายทุนยาต้องบอกจำนวนและพาไปตั้งทุนยาโดยไม่พาไปค่าบริการ');
   const layout = await evaluate(tab, `(() => {
     const c=document.querySelector('#drugMonthCard'); c.scrollIntoView({block:'start'});
     const r=c.getBoundingClientRect();
@@ -512,8 +516,10 @@ async function verifyMonthlyDrugs(tab, origin, viewport) {
   }
   await evaluate(tab, `(() => { const m=document.querySelector('#drugMonth'); m.value='2020-02'; m.dispatchEvent(new Event('change')); return true; })()`, true);
   await waitExpression(tab, `document.querySelector('#drugMonthStatus').textContent.includes('เดือน 2020-02') && document.querySelector('#drugMonthTable tbody tr')`, 'เปลี่ยนเดือนแล้วต้องเห็นผลเดือนใหม่');
+  if (await evaluate(tab, `!!document.querySelector('#drugMonthCostNote').textContent.trim()`)) throw new Error('เดือนที่ไม่มีทุนขาดต้องล้างคำอธิบายของเดือนเก่า');
   await evaluate(tab, `(() => { document.querySelector('#drugMonthSort').value='profit'; document.querySelector('#drugMonthSort').dispatchEvent(new Event('change')); window.__drugApi=window.api; window.api=(method,url,...args)=>url.includes('/reports/drugs-monthly')?Promise.reject(new Error('ทดสอบเครือข่ายขัดข้อง')):window.__drugApi(method,url,...args); document.querySelector('#drugMonthRetry').click(); return true; })()`, true);
   await waitExpression(tab, `document.querySelector('#drugMonthStatus').textContent.includes('โหลดรายงานไม่สำเร็จ') && !document.querySelector('#drugMonthTable tr')`, 'โหลดไม่สำเร็จต้องแจ้งค้างไว้และไม่โชว์ข้อมูลเก่า');
+  if (await evaluate(tab, `!!document.querySelector('#drugMonthCostNote').textContent.trim()`)) throw new Error('โหลดเดือนใหม่ไม่สำเร็จต้องไม่เหลือคำอธิบายทุนของเดือนเก่า');
   await evaluate(tab, `(() => { window.api=window.__drugApi; document.querySelector('#drugMonthRetry').click(); return true; })()`, true);
   await waitExpression(tab, `document.querySelector('#drugMonthStatus').textContent.includes('ข้อมูล ณ') && document.querySelector('#drugMonthTable tbody tr')`, 'กดลองใหม่แล้วตารางต้องกลับมา');
   // Exercise out-of-order reads without writing anything to the isolated server.
@@ -1027,12 +1033,24 @@ async function runViewport({ edge, base, hostBase, cdpPort, viewport, checkHostD
   try {
     const seeded = spawnSync(process.execPath, ['--no-warnings', 'seed.js', '--demo'], { cwd: __dirname, env, encoding: 'utf8' });
     if (seeded.status !== 0) throw new Error(seeded.stderr || seeded.stdout || 'seed failed');
-    const serviceSeed=spawnSync(process.execPath,['--no-warnings','-e',`const {db}=require('./lib/db');
+    const serviceSeed=spawnSync(process.execPath,['--no-warnings','-e',`const {db,today}=require('./lib/db');
 db.exec("INSERT INTO patients(hn,first_name,sex,created_at) VALUES('SERVICE-SYNTH','สังเคราะห์ต้นทุน','F','2020-03-15'); INSERT INTO visits(hn,visit_date,queue_no,state,created_by,created_at) VALUES('SERVICE-SYNTH','2020-03-15',1,'COMPLETED',1,'2020-03-15 12:00:00')");
 const v=db.prepare("SELECT id FROM visits WHERE hn='SERVICE-SYNTH'").get().id;
 const ov=Number(db.prepare("INSERT INTO order_versions(visit_id,version,lines_json,created_by,created_at) VALUES(?,1,'[]',1,'2020-03-15 12:00:00')").run(v).lastInsertRowid);
 db.prepare("INSERT INTO receipts(receipt_no,visit_id,hn,patient_name,order_version_id,subtotal,discount,total,pay_method,status,created_by,created_at) VALUES('SERVICE-SYNTH',?,'SERVICE-SYNTH','สมมติ',?,300,0,300,'cash','ISSUED',1,'2020-03-15 12:00:00')").run(v,ov);
-db.exec("INSERT INTO receipt_lines(receipt_no,line_type,name,qty,unit,price_each,amount,cost_each) VALUES('SERVICE-SYNTH','service','หัตถการสังเคราะห์',1,'ครั้ง',300,300,120)");db.close();`],{cwd:__dirname,env,encoding:'utf8',windowsHide:true});
+db.exec("INSERT INTO receipt_lines(receipt_no,line_type,name,qty,unit,price_each,amount,cost_each) VALUES('SERVICE-SYNTH','service','หัตถการสังเคราะห์',1,'ครั้ง',300,300,120)");
+// Real immutable historical snapshots with unknown service costs in two months.
+// Keep them off today's date so other browser flows keep their daily fixtures.
+const year=today().slice(0,4),day=today().endsWith('-01')?'02':'01';
+for(const month of ['01','02']){
+ const date=year+'-'+month+'-'+day,stamp=date+' 12:00:00',receipt='SERVICE-UNKNOWN-SYNTH-'+month;
+ const queue=db.prepare('SELECT COALESCE(MAX(queue_no),0)+1 AS next FROM visits WHERE visit_date=?').get(date).next;
+ const visit=Number(db.prepare("INSERT INTO visits(hn,visit_date,queue_no,state,created_by,created_at) VALUES('SERVICE-SYNTH',?,?,'COMPLETED',1,?)").run(date,queue,stamp).lastInsertRowid);
+ const order=Number(db.prepare("INSERT INTO order_versions(visit_id,version,lines_json,created_by,created_at) VALUES(?,1,'[]',1,?)").run(visit,stamp).lastInsertRowid);
+ db.prepare("INSERT INTO receipts(receipt_no,visit_id,hn,patient_name,order_version_id,subtotal,discount,total,pay_method,status,created_by,created_at) VALUES(?,?,'SERVICE-SYNTH','สมมติต้นทุนบริการ',?,300,0,300,'cash','ISSUED',1,?)").run(receipt,visit,order,stamp);
+ db.prepare("INSERT INTO receipt_lines(receipt_no,line_type,name,qty,unit,price_each,amount,cost_each) VALUES(?,'service','หัตถการสังเคราะห์ไม่ระบุทุน',1,'ครั้ง',300,300,NULL)").run(receipt);
+}
+db.close();`],{cwd:__dirname,env,encoding:'utf8',windowsHide:true});
     if(serviceSeed.status!==0)throw Error(serviceSeed.stderr);
     const apptSeed = spawnSync(process.execPath,['--no-warnings','-e',`const {db,now,today}=require('./lib/db');const p=require('./lib/patients');const user=db.prepare("SELECT id FROM users WHERE username='front'").get().id;const d=new Date(today()+'T00:00:00');d.setDate(d.getDate()-2);const past=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');const ids=[];for(let i=0;i<4;i++){const hn=p.register({first_name:'ติดตามสังเคราะห์'+i,last_name:'ทดสอบชื่อและนามสกุลภาษาไทยยาว',phone:'0800000000',sex:'F'},user);ids.push(Number(db.prepare('INSERT INTO appointments (hn,appt_date,days,created_by,created_at) VALUES (?,?,?,?,?)').run(hn,past,0,user,now()).lastInsertRowid));}console.log(JSON.stringify(ids));db.close();`],{cwd:__dirname,env,encoding:'utf8',windowsHide:true});
     if(apptSeed.status!==0)throw Error(apptSeed.stderr);

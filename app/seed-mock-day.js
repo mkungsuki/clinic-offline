@@ -141,10 +141,12 @@ function payVisit({ vid, orderVersionId, hn, lines, when, payMethod = 'cash', ca
     const ins = db.prepare(`INSERT INTO receipt_lines (receipt_no, line_type, ref_id, name, qty, unit, price_each, amount, instructions, cost_each, item_code)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const drugQ = db.prepare('SELECT cost, code FROM drugs WHERE id = ?');
+    const serviceQ = db.prepare('SELECT cost FROM services WHERE id = ?');
     for (const l of realLines) {
       const d = l.type === 'drug' ? (drugQ.get(l.ref_id) || {}) : {};
+      const cost = l.type === 'drug' ? d.cost ?? null : serviceQ.get(l.ref_id)?.cost ?? null;
       ins.run(receiptNo, l.type, l.ref_id, l.name, l.qty, l.unit, l.price_each, round2(l.qty * l.price_each),
-        l.instructions || null, l.type === 'drug' ? d.cost ?? null : null, d.code || null);
+        l.instructions || null, cost, d.code || null);
       if (l.type === 'drug') { // ตัด stock จริงด้วยเวลาเดียวกับบิล (ledger + cache ตรงกัน)
         db.prepare(`INSERT INTO stock_movements (drug_id, type, qty, ref, reason, created_by, created_at)
           VALUES (?, 'dispense', ?, ?, NULL, ?, ?)`).run(l.ref_id, -l.qty, receiptNo, FRONT, when);

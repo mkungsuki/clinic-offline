@@ -370,7 +370,9 @@ test('appointment follow-up keeps durable result/history, retry identity and pat
 
 test('monthly drug report keeps unknown costs, current-stock context and read-only retry', () => {
   const script = sources.find(s => s.name === 'drug-report.js').text;
-  assert.match(script, /n == null \? 'ต้องตรวจ'/);
+  assert.match(script, /ReportCost\.amount/);
+  assert.match(script, /showCostNote\('drugMonthCostNote'/);
+  assert.match(script, /id="drugMonthCostNote"/);
   assert.match(script, /request !== sequence/);
   assert.match(script, /table.innerHTML = ''/);
   assert.match(script, /role="status"/);
@@ -379,10 +381,57 @@ test('monthly drug report keeps unknown costs, current-stock context and read-on
   assert.match(script, /ไม่ใช่ยอดสิ้นเดือน/);
   assert.doesNotMatch(script, /api\('(POST|PATCH|DELETE)'/);
   const page = sources.find(s => s.name === 'reports.html').text;
-  assert.match(page, /missingDrugCosts \? 'ข้อมูลทุนไม่ครบ'/);
-  assert.match(page, /lg.total.unknown_cost_lines \? 'ยังคำนวณไม่ได้'/);
-  assert.match(page, /d.no_cost_lines \? 'ยังคำนวณไม่ได้'/);
+  assert.match(page, /ReportCost\.note\(stats/);
+  assert.match(page, /src="\/report-cost\.js"/);
+  for (const id of ['dailyCostNote', 'ledgerCostNote', 'drugCostNote']) {
+    assert.equal((page.match(new RegExp('id="' + id + '"', 'g')) || []).length, 1, id + ' must be one scoped explanation');
+  }
+  assert(page.indexOf('id="ledgerCostNote"') < page.indexOf('id="ledgerTable"'), 'explain missing costs before the monthly numbers');
+  for (const field of ['m.drug_cost, m.unknown_drug_cost_lines', 'm.service_cost, m.unknown_service_cost_lines',
+    'm.gross_profit, m.unknown_cost_lines', 'm.direct_cost, m.unknown_cost_lines',
+    'lg.total.direct_cost, lg.total.unknown_cost_lines', 'lg.total.gross_profit, lg.total.unknown_cost_lines',
+    'd.cost, d.no_cost_lines', 'd.profit, d.no_cost_lines']) {
+    assert(page.replace(/\s+/g, '').includes(('ReportCost.amount(' + field + ')').replace(/\s+/g, '')), field + ' must not turn partial known costs into a numeric total');
+  }
+  assert.doesNotMatch(page + script, /(?:ข้อมูลต้น)?ทุนไม่ครบ|ยังคำนวณไม่ได้/, 'do not repeat warning prose in every amount or row');
   assert.match(page, /ส่วนต่างก่อนส่วนลดบิล/);
+});
+
+test('report cost symbols distinguish unknown from zero and give one actionable explanation', () => {
+  const source = sources.find(s => s.name === 'report-cost.js').text;
+  const context = vm.createContext({ baht: n => Number(n).toFixed(2), esc: s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])) });
+  vm.runInContext(source, context);
+  const cost = context.ReportCost;
+  assert(cost && typeof cost.amount === 'function' && typeof cost.note === 'function');
+  for (const value of [null, undefined]) {
+    assert.match(cost.amount(value), /aria-label="[^"]+"/);
+    assert.match(cost.amount(value), />—</);
+    assert.doesNotMatch(cost.amount(value), /0\.00/);
+  }
+  assert.equal(cost.amount(0), '0.00', 'an explicitly known zero is still a number');
+  assert.equal(cost.amount(180), '180.00');
+  assert.match(cost.amount(120, 1), />—</, 'known subtotal must stay hidden when some cost lines are unknown');
+  assert.equal(cost.note({ unknown_cost_lines: 0, unknown_drug_cost_lines: 0, unknown_service_cost_lines: 0 }), '');
+  const both = cost.note({ unknown_cost_lines: 5, unknown_drug_cost_lines: 2, unknown_service_cost_lines: 3 });
+  assert.match(both, /ยา[^<]*2/);
+  assert.match(both, /บริการ[^<]*3/);
+  assert.match(both, /รายการในใบเสร็จ/);
+  assert.match(both, /href="\/stock\.html(?:#drugTable)?"/);
+  assert.match(both, /href="\/stock\.html#serviceCard"/);
+  assert.match(both, /บิลเก่า|ใบเสร็จเดิม/);
+  const drug = cost.note({ unknown_cost_lines: 2, unknown_drug_cost_lines: 2, unknown_service_cost_lines: 0 }, { drugOnly: true });
+  assert.doesNotMatch(drug, /#serviceCard/);
+  const service = cost.note({ unknown_cost_lines: 3, unknown_drug_cost_lines: 0, unknown_service_cost_lines: 3 });
+  assert.equal((service.match(/href=/g) || []).length, 1, 'service-only missing costs must not send the owner to drug settings');
+  assert.match(service, /#serviceCard/);
+  const snapshotName = '<img src=x onerror="alert(1)"> & ยา \'สังเคราะห์\'';
+  const named = cost.note({ unknown_cost_lines: 2, unknown_drug_cost_lines: 2, unknown_service_cost_lines: 0,
+    unknown_cost_items: [{ line_type: 'drug', name: snapshotName, lines: 2 }] });
+  assert.match(named, /<details class="cost-details"><summary>/, 'owner can expand the missing snapshot names');
+  assert.doesNotMatch(named, /<details[^>]*\bopen\b/, 'item names do not add noise until requested');
+  assert.match(named, /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt; &amp; ยา &#39;สังเคราะห์&#39;/);
+  assert.doesNotMatch(named, /<img|<script/, 'receipt snapshot names must not become executable markup');
+  assert.match(named, /ยา 2 รายการในใบเสร็จ<\/li>/, 'each snapshot name keeps its category and count');
 });
 
 test('ใบยาอ่านง่ายปิดก่อน ไม่ย่อ ไม่เปิด popup หลัง await และมี error ค้าง', () => {
