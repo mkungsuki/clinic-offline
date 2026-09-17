@@ -654,6 +654,85 @@ test('password recovery keeps persistent outcomes and never stores typed secrets
   assert.match(helper, /id="backupPassword" type="password" autocomplete="current-password"/);
   assert.doesNotMatch(admin + helper, /(?:localStorage|sessionStorage)\.setItem\([^\n]*(?:JSON\.stringify\(body\)|password:|\.value)/i);
 });
+test('stock warning controls distinguish quantity from lot expiry and keep saved state visible', () => {
+  const stock = sources.find(s => s.name === 'stock.html').text;
+  assert.match(stock, /id="saveWarnDaysBtn"[^>]*onclick="saveWarnDays\(\)"/, 'global days must have an explicit save button');
+  assert.match(stock, /id="warnDaysStatus" role="status"/);
+  assert.doesNotMatch(stock, /id="warnDays"[^>]*onchange=/, 'blur must not silently save the setting');
+  assert.match(stock, /\.stock-warning-controls\s*\{[^}]*flex-wrap:\s*wrap/);
+  assert.doesNotMatch(stock, /\.warn-days\s*\{[^}]*white-space:\s*nowrap/);
+  assert.match(stock, /id="drugReorderHelp"/);
+  assert.match(stock, /id="drugWarnHelp"/);
+  assert.match(stock, /id="stockCountSummary"/);
+  assert.match(stock, /id="lotGuide"/);
+  assert.match(stock, /\.stock-lot-link\s*\{[^}]*display:block/,'multiline lot link must be clickable throughout its visible box');
+  assert.match(stock, /ไม่ใช่จำนวนล็อต/);
+  assert.match(stock, /จำนวนคงเหลือรวม/);
+  assert.match(stock, /ยังยืนยันผลไม่ได้/);
+  const start = stock.indexOf('function updateStockWarningHelp()');
+  assert(start >= 0);
+  const end = stock.indexOf('\n}\n', start) + 2;
+  const elements = Object.fromEntries(['d_unit','d_reorder','d_warn','drugReorderLabel','drugReorderHelp','drugWarnHelp'].map(id => [id, { value: '', textContent: '', placeholder: '' }]));
+  elements.d_unit.value = 'ขวด'; elements.d_reorder.value = '10';
+  const context = { document: { getElementById: id => elements[id] }, warnDays: 90 };
+  vm.runInNewContext(stock.slice(start, end) + '; updateStockWarningHelp();', context);
+  assert.match(elements.drugReorderLabel.textContent, /ขวด/);
+  assert.match(elements.drugReorderHelp.textContent, /10 ขวด/);
+  assert.match(elements.drugReorderHelp.textContent, /ไม่ใช่จำนวนล็อต/);
+  assert.match(elements.drugWarnHelp.textContent, /90 วัน/);
+  elements.d_unit.value = 'เม็ด'; elements.d_warn.value = '30';
+  vm.runInNewContext('updateStockWarningHelp()', context);
+  assert.match(elements.drugReorderLabel.textContent, /เม็ด/);
+  assert.match(elements.drugWarnHelp.textContent, /30 วัน/);
+});
+test('stock history opens in a centred read-only modal with loading, retry and return focus', () => {
+  const stock = sources.find(s => s.name === 'stock.html').text;
+  assert.doesNotMatch(stock, /id="moveCard"|getElementById\('moveCard'\)/);
+  assert.match(stock, /id="stockMovesDialog" role="dialog"/);
+  assert.match(stock, /#modalBack:has\(#stockMovesDialog\)\s*\{[^}]*align-items:center/);
+  assert.match(stock, /id="stockMovesStatus" role="status"/);
+  assert.match(stock, /id="retryStockMoves"/);
+  assert.match(stock, /function closeStockMoves\(\)[\s\S]*?\.focus\(\)/);
+  const start = stock.indexOf('async function showMoves(id)');
+  const body = stock.slice(start, stock.indexOf('\nasync function addService', start));
+  assert(body.indexOf('openModal(') < body.indexOf('await api('), 'loading dialog must open before the request');
+  assert.match(body, /request !== stockMovesRequest/);
+  assert.match(body, /api\('GET', `\/api\/drugs\/\$\{id\}\/movements`\)/);
+  assert.doesNotMatch(body, /api\('(?:POST|PATCH|DELETE)'/);
+});
+test('stock keeps expiry and catalog success in persistent panels without redundant overlay toasts', () => {
+  const stock = sources.find(s => s.name === 'stock.html').text;
+  const load = stock.slice(stock.indexOf('async function load()'), stock.indexOf('function warnLimit('));
+  assert.doesNotMatch(load, /toast\(/, 'loading stock must not add a redundant toast over the next dialog');
+  assert.match(stock, /id="expirySummary"/, 'expiry summary must remain visible in the page');
+  assert.match(stock, /drugSaveStatus\('บันทึก/);
+  assert.match(stock, /serviceStatus\('บันทึก/);
+  assert.doesNotMatch(stock, /toast\('บันทึกรายการยาแล้ว'\)|toast\('บันทึกราคาและทุนแล้ว'\)/);
+  assert.match(stock, /toast\(e.message,\s*true\)/, 'errors must remain visible above modals');
+});
+test('recorded vital values use the shared readable component in queue, exam and history', () => {
+  const common=sources.find(s=>s.name==='common.js').text,front=sources.find(s=>s.name==='index.html').text,exam=sources.find(s=>s.name==='exam.html').text;
+  assert.match(common,/function vitalReadings\(v\)/);
+  assert.match(common,/<strong class="vital-value">/);
+  assert.match(front,/return vitalReadings\(v\)/);
+  for(const expression of ['vitalReadings(v)','vitalReadings(cur)','vitalReadings(h)'])assert(exam.includes(expression),expression);
+  assert.match(css,/\.vital-value\s*\{[^}]*font-size:\s*20px[^}]*font-weight:\s*800/);
+});
+test('dose editing names dispensing versus dose units and offers a visible interval mode', () => {
+  const exam=sources.find(s=>s.name==='exam.html').text,stock=sources.find(s=>s.name==='stock.html').text;
+  assert.match(stock,/หน่วยที่จ่าย \/ คิดราคา \/ ตัดสต็อก/);
+  assert.match(stock,/<option value="interval">/);
+  for(const key of ['dose_unit','interval_amount','interval_min_hours','interval_max_hours','interval_indication'])assert(exam.includes('data-dose-field="'+key+'"'),key);
+  assert.match(exam,/data-dispense-qty/);
+  assert.match(exam,/const invalid=lines.find\(l=>drugDoseProblem\(l\)\)/);
+  assert.doesNotMatch(exam,/Math.ceil\(dosePerDay/);
+});
+test('opening a new dialog clears prior transient successes without clearing errors or durable outcomes', () => {
+  const common=sources.find(s=>s.name==='common.js').text;
+  const body=common.slice(common.indexOf('function openModal('),common.indexOf('function closeModal('));
+  assert.match(body,/querySelectorAll\('#toast \.m:not\(\.err\)'\)\.forEach\(message => message.remove\(\)\)/);
+  assert.doesNotMatch(body,/printFallbacks|finishResult|retryFinish|\.err'\)/);
+});
 if (process.exitCode) process.exit(process.exitCode);
 console.log(`
 UI static: ${passed} tests passed`);

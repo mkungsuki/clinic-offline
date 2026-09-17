@@ -94,6 +94,11 @@
   .doserow label { font-size: 10.5px; color: var(--dim); display: block; text-align: center; }
   .doserow input { width: 46px; padding: 5px 3px; text-align: center; }
   .doserow select { width: 92px; padding: 5px 3px; font-size: 12.5px; }
+  .dose-interval { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px; }
+  .dose-interval label { text-align:left;color:var(--ink2);font-size:12px; }
+  .dose-interval label span { display:block;min-height:32px; }
+  .dose-interval input { width:100%; }
+  .dose-interval .interval-indication { grid-column:1/-1; }
   .oline .oinstr { margin-top: 6px; }
   .oline .oinstr input { font-size: 12.5px; padding: 5px 8px; width: 100%; }
   .oline .osum { text-align: right; font-size: 13px; margin-top: 4px; }
@@ -101,7 +106,11 @@
   .drug-summary { font-size: 13px; color: var(--ink2); margin-top: 5px; line-height: 1.35; cursor: pointer; }
   .drug-summary.empty { color: var(--dim); }
   .dose-editor { border-top: 1px dashed var(--line); margin-top: 7px; padding-top: 7px; }
-  .dose-mode { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 7px; }
+  .dose-mode { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 4px; margin-bottom: 7px; }
+  .dose-unit-row { display:flex;flex-wrap:wrap;align-items:end;gap:8px;margin:8px 0; }
+  .dose-unit-row label { flex:1;min-width:160px; }
+  .dose-unit-row input { width:100%; }
+  .dose-unit-help { color:var(--ink);font-size:13px;margin:6px 0; }
   .dose-mode button { padding: 6px 3px; font-size: 11.5px; }
   .dose-mode button.on { border-color: var(--blue); background: var(--blue-soft); color: var(--blue); font-weight: 700; }
   .time-row { display: grid; grid-template-columns: 95px 90px 1fr; align-items: end; gap: 6px; margin: 5px 0; }
@@ -232,6 +241,7 @@
             <input type="number" id="daysAll" min="1" placeholder="กี่วัน" style="width:70px;text-align:center;padding:5px">
             <button class="btn sm" onclick="applyDaysAll()">📅 ตั้งวันยาทุกตัว</button>
           </div>
+          <div id="daysAllResult" role="status" hidden style="white-space:pre-line;font-size:14px;line-height:1.6"></div>
         </div>
       </div>
       <div class="card hidden" id="doneCard"></div>
@@ -322,17 +332,12 @@ function renderQueue(queue, force = false) {
 }
 function bigRow(v, action, tag = '') {
   // ค่าเกินเกณฑ์ = แดง (UAT B2) + โชว์ "มาด้วยอาการ" ที่ front กรอกมา (UAT B3)
-  const vs = [];
-  if (v.weight_kg) vs.push(`${v.weight_kg} กก.`);
-  if (v.bp_sys) vs.push(`<span class="${v.bp_sys >= 140 || (v.bp_dia || 0) >= 90 ? 'vwarn' : ''}">BP ${v.bp_sys}/${v.bp_dia || '-'}</span>`);
-  if (v.temp_c) vs.push(`<span class="${v.temp_c >= 37.8 ? 'vwarn' : ''}">${v.temp_c}°C</span>`);
-  if (v.pulse) vs.push(`<span class="${v.pulse >= 110 ? 'vwarn' : ''}">P ${v.pulse}</span>`);
-  if (v.glucose) vs.push(`<span class="${v.glucose >= 126 ? 'vwarn' : ''}">DTX ${v.glucose}</span>`);
   return `<div class="bigq${multipleDoctors()&&v.state==='WAITING'&&v.preferred_doctor_id&&v.preferred_doctor_id!==ME.user_id?' preferred-other':''}">
     <div class="qno">${v.queue_no}</div>
     <div style="flex:1"><div class="nm">${esc(v.prefix || '')}${esc(v.first_name)} ${esc(v.last_name || '')}
       ${tag ? `<span class="chip st-IN_EXAM">${tag}</span>` : ''}</div>
-      <div class="sub">${ageOf(v.birth_date)}${v.chronic ? ' · ' + esc(v.chronic) : ''}${vs.length ? ' · 🩺 ' + vs.join(' · ') : ''}</div>
+      <div class="sub">${ageOf(v.birth_date)}${v.chronic ? ' · ' + esc(v.chronic) : ''}</div>
+      ${vitalReadings(v)}
       ${v.cc ? `<div class="sub">💬 ${esc(v.cc)}</div>` : ''}</div>
     ${action}</div>`;
 }
@@ -366,6 +371,8 @@ async function openVisit(id) {
   if (cur && draftDirty) await pushDraft().catch(() => {});
   allergyAckSig = null; // เปลี่ยนคนไข้/เปิด visit ใหม่ ต้องยืนยันแพ้ยาใหม่เสมอ
   cur = await api('GET', `/api/visits/${id}`);
+  document.getElementById('daysAllResult').textContent = '';
+  document.getElementById('daysAllResult').hidden = true;
   previousAppointment = null;
   showView('exam');
   renderPatientHead();
@@ -409,19 +416,13 @@ function renderPatientHead() {
   const allergy = p.allergies.length
     ? p.allergies.map(a => `<span class="chip allergy">⚠ แพ้ ${esc(a.substance)}</span>`).join(' ')
     : '<span class="muted">ไม่มีบันทึกแพ้ยา</span>';
-  const vs = [];
-  if (cur.weight_kg) vs.push(`${cur.weight_kg} กก.`);
-  if (cur.bp_sys) vs.push(`BP ${cur.bp_sys}/${cur.bp_dia || '-'}`);
-  if (cur.temp_c) vs.push(`T ${cur.temp_c}°C`);
-  if (cur.pulse) vs.push(`P ${cur.pulse}`);
-  if (cur.glucose) vs.push(`DTX ${cur.glucose}`);
   host.innerHTML = `<div class="patient-head">
     <b style="font-size:18px">${esc(p.prefix || '')}${esc(p.first_name)} ${esc(p.last_name || '')}</b>
     <span class="muted">HN ${esc(p.hn)} · ${p.sex === 'M' ? 'ชาย' : 'หญิง'} ${ageOf(p.birth_date)}</span>
     <span class="chip st-${cur.state}">${stateTH(cur.state)}</span>
     <button class="btn sm" style="float:right" onclick="showTrends('${p.hn}')">📈 กราฟ BP/น้ำตาล</button><br>
     ${allergy} ${p.chronic ? `<span class="chip" style="background:#fde68a">${esc(p.chronic)}</span>` : ''}
-    ${vs.length ? `<span class="muted"> · 🩺 ${vs.join(' · ')}</span>` : ''}
+    ${vitalReadings(cur)}
     ${p.emergency_name || p.emergency_phone ? `<span class="muted"> · 🆘 ${esc(p.emergency_name || '')} ${p.emergency_phone ? '📞 ' + esc(p.emergency_phone) : ''}</span>` : ''}
   </div>`;
 }
@@ -436,11 +437,6 @@ async function loadHistory(hn) {
   if (!items.length) { host.innerHTML = '<div class="muted">คนไข้ใหม่ — ไม่มีประวัติ</div>'; return; }
   host.innerHTML = items.map((h, i) => {
     const n = h.note || {};
-    const vchips = [];
-    if (h.bp_sys) vchips.push(`<span class="vchip ${h.bp_sys >= 140 ? 'warn' : ''}">BP ${h.bp_sys}/${h.bp_dia || '-'}</span>`);
-    if (h.glucose) vchips.push(`<span class="vchip ${h.glucose >= 126 ? 'warn' : ''}">DTX ${h.glucose}</span>`);
-    if (h.weight_kg) vchips.push(`<span class="vchip">${h.weight_kg} กก.</span>`);
-    if (h.temp_c) vchips.push(`<span class="vchip ${h.temp_c >= 37.8 ? 'warn' : ''}">${h.temp_c}°C</span>`);
     const rows = [
       n.cc ? hrow('CC', n.cc) : '',
       n.hpi ? hrow('HPI', n.hpi) : '',
@@ -460,7 +456,7 @@ async function loadHistory(hn) {
         <span class="harrow">▼</span>
       </div>
       <div class="hbody ${i === 0 ? '' : 'hidden'}">
-        ${vchips.length ? `<div class="hvits">${vchips.join('')}</div>` : ''}
+        ${vitalReadings(h)}
         ${rows}${drugs}${remed}
         <div class="hby">${esc(h.doctor_name || '')}</div>
       </div>
@@ -627,7 +623,8 @@ attachSearch(document.getElementById('n_icd'),
 // ================= orders =================
 // dose modes: เวลามาตรฐาน / เวลาเฉพาะ / PRN / คำสั่งพิเศษ
 function defaultDose(mode = 'standard') {
-  return { mode, m: '', n: '', e: '', b: '', timing: 'หลังอาหาร', days: '', times: [],
+  return { mode, m: '', n: '', e: '', b: '', timing: mode === 'interval' ? '' : 'หลังอาหาร', days: '', times: [],
+    dose_unit: '', interval_amount: '', interval_min_hours: '', interval_max_hours: '', interval_indication: '',
     prn_amount: '', prn_indication: '', prn_interval_hours: '', prn_max_per_day: '',
     qty_source: 'calculated', instructions_source: 'calculated' };
 }
@@ -637,13 +634,11 @@ function dosePerDay(dose) {
   if ((dose.mode || 'standard') !== 'standard') return 0;
   return (+dose.m || 0) + (+dose.n || 0) + (+dose.e || 0) + (+dose.b || 0);
 }
-function doseTotalQty(dose) {
-  const per = dosePerDay(dose);
-  const days = +dose.days || 0;
-  return per > 0 && days > 0 ? Math.ceil(per * days) : 0;
+function doseTotalQty(dose, unit) {
+  return DoseTemplate.quantity(dose, unit);
 }
 function doseText(dose, unit) {
-  if (Object.hasOwn(dose, 'additional_instructions')) return DoseTemplate.text(dose, unit);
+  if (Object.hasOwn(dose, 'additional_instructions') || dose.dose_unit || dose.mode === 'interval') return DoseTemplate.text(dose, unit);
   const u = unit || 'เม็ด';
   const mode = dose.mode || 'standard';
   if (mode === 'exact_times') {
@@ -671,7 +666,12 @@ function doseText(dose, unit) {
 }
 function recomputeLine(l) {
   if (l.type !== 'drug' || !l.dose) return;
-  const q = doseTotalQty(l.dose);
+  const manualOnly = !['standard','exact_times'].includes(l.dose.mode) || DoseTemplate.doseUnit(l.dose,l.unit) !== l.unit;
+  if (manualOnly && l.dose.qty_source !== 'manual') {
+    l.qty = ''; // A previous automatic amount is not a confirmed dispensing quantity in a different unit.
+    l.dose.qty_source = 'manual';
+  }
+  const q = doseTotalQty(l.dose, l.unit);
   l.calculated_qty = q || null;
   if (q > 0 && l.dose.qty_source !== 'manual') l.qty = q;
   if (l.dose.instructions_source !== 'manual') l.instructions = doseText(l.dose, l.unit);
@@ -686,7 +686,9 @@ function updDose(i, k, v) {
 }
 function setDoseMode(i, mode) {
   const l = lines[i];
+  const previousMode = l.dose?.mode;
   l.dose = { ...defaultDose(mode), ...(l.dose || {}), mode };
+  if(mode === 'interval' && previousMode !== 'interval') l.dose.timing = '';
   if (mode === 'exact_times' && !(l.dose.times || []).length) l.dose.times = [{ time: '', amount: '' }];
   l._expanded = true;
   recomputeLine(l); draftDirty = true; renderOrder();
@@ -709,11 +711,19 @@ function updDrugQty(i, v) {
   l.dose.qty_source = 'manual'; draftDirty = true; renderOrder();
 }
 function useCalculatedQty(i) {
-  const l = lines[i]; if (!l.dose) return; l.dose.qty_source = 'calculated'; recomputeLine(l); draftDirty = true; renderOrder();
+  const l = lines[i]; if (!DoseTemplate.canCalculateQty(l.dose,l.unit)) return; l.dose.qty_source = 'calculated'; recomputeLine(l); draftDirty = true; renderOrder();
 }
 function useCalculatedInstructions(i) {
   const l=lines[i]; if(!l.dose)return;
   l.dose.instructions_source='calculated'; recomputeLine(l); draftDirty=true; renderOrder();
+}
+function drugDoseProblem(l) {
+  if(l.type!=='drug')return '';
+  if(!Number.isFinite(Number(l.qty)) || Number(l.qty)<=0)return 'ใส่จำนวนที่ต้องการจ่ายจริง';
+  if(l.dose?.mode==='interval' || l.dose?.dose_unit) {
+    try { DoseTemplate.normalize({...l.dose,unit:l.unit},l.unit); } catch(e) { return e.message; }
+  }
+  return '';
 }
 function updField(i, k, v) {
   lines[i][k] = k === 'instructions' || k === 'name' ? v : (Number(v) || 0);
@@ -797,49 +807,61 @@ function renderOrder() {
     const allergyHit = allergySubstanceFor(l.name);
     const d = { ...defaultDose(), ...(l.dose || {}) };
     d.mode = d.mode || 'standard';
-    const calc = doseTotalQty(d);
+    const calc = doseTotalQty(d, l.unit);
+    const doseUnit = DoseTemplate.doseUnit(d,l.unit);
+    const separateUnits = doseUnit !== l.unit;
     const manualDiff = d.qty_source === 'manual' && calc > 0 && Number(l.qty) !== calc;
     const expanded = !!l._expanded;
     let editor = '';
     if (expanded) {
       let fields = '';
       if (d.mode === 'standard') fields = `<div class="doserow">
-        <span><label>เช้า</label><input type="number" min="0" step="0.25" value="${d.m}" onchange="updDose(${i},'m',this.value)"></span>
-        <span><label>เที่ยง</label><input type="number" min="0" step="0.25" value="${d.n}" onchange="updDose(${i},'n',this.value)"></span>
-        <span><label>เย็น</label><input type="number" min="0" step="0.25" value="${d.e}" onchange="updDose(${i},'e',this.value)"></span>
-        <span><label>ก่อนนอน</label><input type="number" min="0" step="0.25" value="${d.b}" onchange="updDose(${i},'b',this.value)"></span>
-        <span><label>มื้ออาหาร</label><select onchange="updDose(${i},'timing',this.value)">${['หลังอาหาร', 'ก่อนอาหาร', 'พร้อมอาหาร', ''].map(t => `<option value="${t}" ${d.timing === t ? 'selected' : ''}>${t || '—'}</option>`).join('')}</select></span>
-        <span><label>กี่วัน</label><input type="number" min="0" value="${d.days}" onchange="updDose(${i},'days',this.value)"></span></div>`;
+        <span><label>เช้า</label><input data-dose-field="m" type="number" min="0" step="0.25" value="${d.m}" onchange="updDose(${i},'m',this.value)"></span>
+        <span><label>เที่ยง</label><input data-dose-field="n" type="number" min="0" step="0.25" value="${d.n}" onchange="updDose(${i},'n',this.value)"></span>
+        <span><label>เย็น</label><input data-dose-field="e" type="number" min="0" step="0.25" value="${d.e}" onchange="updDose(${i},'e',this.value)"></span>
+        <span><label>ก่อนนอน</label><input data-dose-field="b" type="number" min="0" step="0.25" value="${d.b}" onchange="updDose(${i},'b',this.value)"></span>
+        <span><label>มื้ออาหาร</label><select data-dose-field="timing" onchange="updDose(${i},'timing',this.value)">${['หลังอาหาร', 'ก่อนอาหาร', 'พร้อมอาหาร', ''].map(t => `<option value="${t}" ${d.timing === t ? 'selected' : ''}>${t || '—'}</option>`).join('')}</select></span>
+        <span><label>กี่วัน</label><input data-dose-field="days" type="number" min="0" value="${d.days}" onchange="updDose(${i},'days',this.value)"></span></div>`;
       if (d.mode === 'exact_times') fields = `<div>${(d.times || []).map((x, j) => `<div class="time-row">
         <label class="f"><span>เวลา</span><input type="time" value="${esc(x.time || '')}" onchange="updTime(${i},${j},'time',this.value)"></label>
         <label class="f"><span>จำนวน</span><input type="number" min="0.25" step="0.25" value="${x.amount || ''}" onchange="updTime(${i},${j},'amount',this.value)"></label>
         <button class="btn sm ghost-red" onclick="rmDoseTime(${i},${j})">ลบเวลา</button></div>`).join('')}
         <button class="btn sm" onclick="addDoseTime(${i})">＋ เพิ่มเวลา</button>
-        <div class="doserow"><span><label>มื้ออาหาร</label><select onchange="updDose(${i},'timing',this.value)">${['หลังอาหาร', 'ก่อนอาหาร', 'พร้อมอาหาร', ''].map(t => `<option value="${t}" ${d.timing === t ? 'selected' : ''}>${t || '—'}</option>`).join('')}</select></span>
-        <span><label>กี่วัน</label><input type="number" min="0" value="${d.days}" onchange="updDose(${i},'days',this.value)"></span></div></div>`;
+        <div class="doserow"><span><label>มื้ออาหาร</label><select data-dose-field="timing" onchange="updDose(${i},'timing',this.value)">${['หลังอาหาร', 'ก่อนอาหาร', 'พร้อมอาหาร', ''].map(t => `<option value="${t}" ${d.timing === t ? 'selected' : ''}>${t || '—'}</option>`).join('')}</select></span>
+        <span><label>กี่วัน</label><input data-dose-field="days" type="number" min="0" value="${d.days}" onchange="updDose(${i},'days',this.value)"></span></div></div>`;
       if (d.mode === 'prn') fields = `<div class="doserow">
-        <span><label>ครั้งละ</label><input type="number" min="0.25" step="0.25" value="${d.prn_amount}" onchange="updDose(${i},'prn_amount',this.value)"></span>
-        <span style="flex:1"><label>ใช้เมื่อมีอาการ</label><input style="width:100%;text-align:left" value="${esc(d.prn_indication)}" onchange="updDose(${i},'prn_indication',this.value)"></span>
-        <span><label>ห่างอย่างน้อย (ชม.)</label><input type="number" min="0" value="${d.prn_interval_hours}" onchange="updDose(${i},'prn_interval_hours',this.value)"></span>
-        <span><label>ไม่เกิน/วัน</label><input type="number" min="0" value="${d.prn_max_per_day}" onchange="updDose(${i},'prn_max_per_day',this.value)"></span></div>`;
-      if (d.mode === 'manual') fields = `<div class="muted">ใช้สำหรับไตเตรทยา สลับวัน ยาน้ำ/ยาทา หรือสูตรซับซ้อน — ระบุคำสั่งและจำนวนจ่ายจริงด้านล่าง</div>`;
+        <span><label>ครั้งละ</label><input data-dose-field="prn_amount" type="number" min="0.25" step="0.25" value="${d.prn_amount}" onchange="updDose(${i},'prn_amount',this.value)"></span>
+        <span style="flex:1"><label>ใช้เมื่อมีอาการ</label><input data-dose-field="prn_indication" style="width:100%;text-align:left" value="${esc(d.prn_indication)}" onchange="updDose(${i},'prn_indication',this.value)"></span>
+        <span><label>ห่างอย่างน้อย (ชม.)</label><input data-dose-field="prn_interval_hours" type="number" min="0" value="${d.prn_interval_hours}" onchange="updDose(${i},'prn_interval_hours',this.value)"></span>
+        <span><label>ไม่เกิน/วัน</label><input data-dose-field="prn_max_per_day" type="number" min="0" value="${d.prn_max_per_day}" onchange="updDose(${i},'prn_max_per_day',this.value)"></span></div>`;
+      if (d.mode === 'interval') fields = `<div class="doserow dose-interval">
+        <label><span>ครั้งละ (${esc(doseUnit)})</span><input data-dose-field="interval_amount" type="number" min="0.01" step="any" value="${esc(d.interval_amount)}" onchange="updDose(${i},'interval_amount',this.value)"></label>
+        <label><span>ทุกกี่ชั่วโมง</span><input data-dose-field="interval_min_hours" type="number" min="0.01" step="any" value="${esc(d.interval_min_hours)}" onchange="updDose(${i},'interval_min_hours',this.value)"></label>
+        <label><span>ถึงกี่ชั่วโมง (เว้นได้)</span><input data-dose-field="interval_max_hours" type="number" min="0.01" step="any" value="${esc(d.interval_max_hours)}" onchange="updDose(${i},'interval_max_hours',this.value)"></label>
+        <label><span>มื้ออาหาร</span><select data-dose-field="timing" onchange="updDose(${i},'timing',this.value)">${['','ก่อนอาหาร','หลังอาหาร','พร้อมอาหาร'].map(t=>`<option value="${t}" ${d.timing===t?'selected':''}>${t||'ไม่ระบุ'}</option>`).join('')}</select></label>
+        <label class="interval-indication"><span>ใช้เมื่อมีอาการ (เว้นว่างถ้าให้ตามเวลา)</span><input data-dose-field="interval_indication" style="width:100%;text-align:left" value="${esc(d.interval_indication)}" onchange="updDose(${i},'interval_indication',this.value)"></label></div>
+        <p class="dose-unit-help">ช่องชั่วโมง 4 ถึง 6 = ทุก 4–6 ชั่วโมง · ระบุจำนวนจ่ายเองด้านล่าง</p>`;
+      if (d.mode === 'manual') fields = `<div class="muted">ใช้สำหรับไตเตรทยา สลับวัน หรือสูตรซับซ้อน — ระบุคำสั่งและจำนวนจ่ายจริงด้านล่าง</div>`;
       editor = `<div class="dose-editor"><div class="dose-mode">
-        ${[['standard','เวลามาตรฐาน'],['exact_times','ระบุเวลา'],['prn','เมื่อมีอาการ'],['manual','คำสั่งพิเศษ']].map(x => `<button class="btn ${d.mode === x[0] ? 'on' : ''}" onclick="setDoseMode(${i},'${x[0]}')">${x[1]}</button>`).join('')}</div>
+        ${[['standard','เวลามาตรฐาน'],['exact_times','ระบุเวลา'],['prn','เมื่อมีอาการ'],['interval','ทุกกี่ชั่วโมง'],['manual','คำสั่งพิเศษ']].map(x => `<button data-dose-mode="${x[0]}" class="btn ${d.mode === x[0] ? 'on' : ''}" onclick="setDoseMode(${i},'${x[0]}')">${x[1]}</button>`).join('')}</div>
+        <div class="dose-unit-row"><label class="f"><span>หน่วยขนาดที่ใช้ยา</span><input data-dose-field="dose_unit" value="${esc(d.dose_unit || '')}" placeholder="${esc(l.unit || 'หน่วยเดียวกับที่จ่าย')}" maxlength="30" onchange="updDose(${i},'dose_unit',this.value)"></label><span>หน่วยที่จ่าย / คิดราคา: <b>${esc(l.unit || 'หน่วย')}</b></span></div>
+        <p class="dose-unit-help">จำนวนตามเวลาที่กรอกด้านล่างเป็น <b>${esc(doseUnit)}</b>${separateUnits ? ` · จำนวนจ่ายเป็น <b>${esc(l.unit)}</b> กรอกเอง ระบบไม่แปลงหน่วยให้` : ''}</p>
         ${fields}<div class="oinstr"><input type="text" value="${esc(l.instructions || '')}" placeholder="วิธีใช้ / คำสั่งพิเศษ" onchange="updField(${i},'instructions',this.value)"></div>
-        ${d.instructions_source==='manual' && d.mode!=='manual' ? `<div class="dose-text-review" role="status">วิธีใช้เป็นข้อความเดิมหรือพิมพ์เอง กรุณาทวนให้ตรงกับตาราง${dosePerDay(d)>0 || (d.mode==='prn' && +d.prn_amount>0) ? `<button class="btn sm" onclick="useCalculatedInstructions(${i})">ใช้วิธีใช้จากตารางแทนข้อความนี้</button>` : ''}</div>` : ''}
-        <div class="qty-override"><span>จำนวนจ่ายจริง</span><input type="number" min="0.25" step="0.25" value="${l.qty}" style="width:68px;text-align:center;padding:5px" onchange="updDrugQty(${i},this.value)"><span>${esc(l.unit || '')}</span>
+        ${d.instructions_source==='manual' && d.mode!=='manual' ? `<div class="dose-text-review" role="status">วิธีใช้เป็นข้อความเดิมหรือพิมพ์เอง กรุณาทวนให้ตรงกับตาราง${dosePerDay(d)>0 || (d.mode==='prn' && +d.prn_amount>0) || (d.mode==='interval' && +d.interval_amount>0) ? `<button class="btn sm" onclick="useCalculatedInstructions(${i})">ใช้วิธีใช้จากตารางแทนข้อความนี้</button>` : ''}</div>` : ''}
+        <div class="qty-override"><span>จำนวนจ่ายจริง</span><input data-dispense-qty type="number" min="0.25" step="0.25" value="${l.qty}" style="width:68px;text-align:center;padding:5px" onchange="updDrugQty(${i},this.value)"><span>${esc(l.unit || '')}</span>
           ${calc ? `<span class="muted">สูตร ${calc}</span>${d.qty_source === 'manual' ? `<button class="btn sm" onclick="useCalculatedQty(${i})">ใช้ตามสูตร</button>` : ''}` : ''}</div></div>`;
     }
-    return `<div class="oline${allergyHit ? ' allergy-warn' : ''}"><div class="ohead">
+    return `<div data-drug-id="${l.ref_id}" class="oline${allergyHit ? ' allergy-warn' : ''}"><div class="ohead">
       <span class="onm">${esc(l.name)}</span>
       ${allergyHit ? `<span class="allergy-tag">⚠ แพ้ ${esc(allergyHit)}</span>` : ''}
       <span class="oprice">฿${baht(l.price_each)}/${esc(l.unit || 'หน่วย')}</span>
       <button class="btn sm" onclick="toggleDose(${i})">${expanded ? 'ปิด' : 'แก้ไข'}</button>
       <button class="btn sm ghost-red" onclick="rmLine(${i})">×</button></div>
       <div class="drug-summary ${l.instructions ? '' : 'empty'}" onclick="toggleDose(${i})">${esc(l.instructions || 'ยังไม่ระบุวิธีใช้ — กดแก้ไข')}</div>
-      ${['standard','exact_times'].includes(d.mode) && dosePerDay(d)<=0 ? '<div class="dose-missing" role="status">ยังไม่มีตารางขนาดยา ระบบไม่แปลงวิธีใช้ข้อความเป็นตัวเลข — กดแก้ไขแล้วใส่ขนาดก่อนคำนวณวันยา</div>' : ''}
+      ${['standard','exact_times'].includes(d.mode) && dosePerDay(d)<=0 ? `<div class="dose-missing" role="status">${l.instructions ? 'มีวิธีใช้เป็นข้อความแล้ว แต่ยังไม่มีจำนวนยาในตารางมื้อ' : 'ยังไม่ได้ใส่จำนวนยาตามมื้อ'} — ${expanded ? 'กรอกจำนวนในช่องด้านล่าง' : 'กดแก้ไขเพื่อใส่จำนวนตามมื้อ'}ก่อนให้ระบบคำนวณจำนวนจ่ายจากวันยา</div>` : ''}
       ${editor}
-      <div class="osum">จำนวน <input type="number" min="0.25" step="0.25" value="${l.qty}"
+      ${drugDoseProblem(l) ? `<div class="dose-missing dose-invalid" role="status">${esc(drugDoseProblem(l))}ก่อนจบตรวจ</div>` : ''}
+      <div class="osum">จำนวนจ่าย <input data-dispense-qty type="number" min="0.25" step="0.25" value="${l.qty}"
           style="width:62px;text-align:center;padding:4px" onchange="updDrugQty(${i},this.value)"
           title="พิมพ์จำนวนจ่ายจริงได้เลย ไม่ต้องเปิดแก้ไข"> ${esc(l.unit || '')}
         ${manualDiff ? `<span class="calc-badge">สูตร ${calc} / จ่ายจริง ${l.qty}</span>` : ''}
@@ -873,7 +895,9 @@ function addDiscountConfirm() {
 function newDrugLine(it) {
   const template=DoseTemplate.read(it),dose=template?structuredClone(template):defaultDose(it.dose_mode||'standard');
   if(!template && it.default_instructions) dose.instructions_source='manual';
-  const l={type:'drug',ref_id:it.id,name:it.name,qty:1,unit:it.unit,price_each:it.price,
+  const needsDispenseQty=dose.mode==='interval'||DoseTemplate.doseUnit(dose,it.unit)!==it.unit;
+  if(needsDispenseQty)dose.qty_source='manual';
+  const l={type:'drug',ref_id:it.id,name:it.name,qty:needsDispenseQty?'':1,unit:it.unit,price_each:it.price,
     dose,instructions:template?DoseTemplate.text(template,it.unit):(it.default_instructions||''),_expanded:true};
   if(template)recomputeLine(l);
   return l;
@@ -882,11 +906,13 @@ function newDrugLine(it) {
 // ตั้งจำนวนวันให้ยาทุกตัวในบิล (UAT A3) — คำนวณได้เฉพาะยาที่ใส่ขนาดกินแล้ว
 // ยาที่ยังไม่ใส่ขนาดกิน: ห้ามเงียบ/ห้ามแปะจำนวนวันหลอกๆ — กางช่องให้กรอกและบอกชื่อชัดๆ (UAT รอบ 2)
 function applyDaysAll() {
+  const result = document.getElementById('daysAllResult');
   const n = Math.floor(Number(document.getElementById('daysAll').value));
-  if (!n || n <= 0) { toast('ใส่จำนวนวันในช่องก่อน', true); return; }
+  if (!n || n <= 0) { result.textContent = 'ใส่จำนวนวันในช่องก่อน'; result.hidden = false; return; }
   let done = 0;
   const missing = [];
   const prnSkipped = [];
+  const manualUnits = [];
   for (const l of lines) {
     if (l.type !== 'drug') continue;
     l.dose = { ...defaultDose(), ...(l.dose || {}) };
@@ -897,18 +923,28 @@ function applyDaysAll() {
       continue;
     }
     l.dose.days = n;
+    if (DoseTemplate.doseUnit(l.dose,l.unit)!==l.unit) {
+      recomputeLine(l);
+      manualUnits.push(l.name);
+      continue;
+    }
     l.dose.qty_source = 'calculated';
     recomputeLine(l);
     done++;
   }
   draftDirty = true;
   renderOrder();
-  if (done) toast(`✅ ตั้ง ${n} วัน + คำนวณจำนวนให้ยา ${done} ตัวแล้ว${prnSkipped.length ? ` · ข้ามยาตามอาการ: ${prnSkipped.join(', ')}` : ''}`);
+  const messages = [];
+  if (done) messages.push(`ตั้ง ${n} วัน + คำนวณจำนวนให้ยา ${done} ตัวแล้ว`);
+  if (manualUnits.length) messages.push(`ตั้ง ${n} วันให้ ${manualUnits.join(', ')} แล้ว · หน่วยใช้ต่างจากหน่วยจ่าย จึงคงจำนวนจ่ายที่กรอกเองไว้`);
+  if (prnSkipped.length) messages.push(`ข้าม ${prnSkipped.join(', ')} — ไม่มีตารางคำนวณแน่นอน ให้ระบุจำนวนจ่ายเอง`);
   if (missing.length) {
-    toast(`⚠ ${missing.join(', ')}: ยังไม่ได้ใส่ขนาดกิน (เช้า/เที่ยง/เย็น) ระบบเลยคำนวณจำนวนไม่ได้ — กางช่องให้แล้ว ใส่แล้วกดปุ่มนี้ซ้ำ`, true);
-  } else if (!done && !prnSkipped.length) {
-    toast('ไม่มียาแบบกินตามเวลาในรายการ', true);
+    messages.push(`${missing.join(', ')}: ยังไม่ได้ใส่ขนาดกิน ระบบจึงคำนวณจำนวนไม่ได้ — กางช่องให้แล้ว ใส่แล้วกดปุ่มนี้ซ้ำ`);
+  } else if (!done && !prnSkipped.length && !manualUnits.length) {
+    messages.push('ไม่มียาแบบกินตามเวลาในรายการ');
   }
+  result.textContent = messages.join('\n');
+  result.hidden = false;
 }
 attachSearch(document.getElementById('orderAdd'),
   q => api('GET', `/api/items/search?q=${encodeURIComponent(q)}`),
@@ -1112,14 +1148,14 @@ function calculateMedsToAppointment() {
   const days = cur && cur.appointment && Number(cur.appointment.days);
   if (!days) return;
   const eligible = lines.filter(l => l.type === 'drug' && l.dose &&
-    ['standard', 'exact_times'].includes(l.dose.mode || 'standard') && dosePerDay(l.dose) > 0);
+    DoseTemplate.canCalculateQty({...l.dose,days},l.unit));
   const skipped = lines.filter(l => l.type === 'drug' && !eligible.includes(l));
   if (!eligible.length) { toast('ยังไม่มียาที่มีตารางใช้แน่นอนสำหรับคำนวณ', true); return; }
   const preview = eligible.map(l => {
-    const q = Math.ceil(dosePerDay(l.dose) * days);
+    const q = DoseTemplate.quantity({...l.dose,days},l.unit);
     return `• ${l.name}: ${q} ${l.unit || ''}${l.dose.qty_source === 'manual' ? ` (จ่ายจริงที่แก้ไว้ ${l.qty} จะยังไม่ถูกทับ)` : ''}`;
   }).join('\n');
-  const skipText = skipped.length ? `\n\nข้าม ${skipped.length} รายการที่ไม่มีตารางคำนวณ (รวมยาตามอาการ/คำสั่งพิเศษ)` : '';
+  const skipText = skipped.length ? `\n\nข้าม ${skipped.length} รายการที่ต้องระบุจำนวนจ่ายเอง (หน่วยใช้ต่างจากหน่วยจ่าย หรือไม่มีตารางคำนวณแน่นอน)` : '';
   if (!confirm(`คำนวณยาถึงวันนัด ${days} วัน\n\n${preview}${skipText}\n\nยืนยันใช้จำนวนวันนี้?`)) return;
   for (const l of eligible) { l.dose.days = days; recomputeLine(l); }
   draftDirty = true; renderOrder();
@@ -1272,6 +1308,8 @@ async function saveFavConfirm() {
 // ================= actions =================
 function finishExam() {
   if (!cur) return;
+  const invalid=lines.find(l=>drugDoseProblem(l));
+  if(invalid){invalid._expanded=true;renderOrder();document.querySelector('.dose-invalid')?.scrollIntoView({block:'center'});toast(invalid.name+' — '+drugDoseProblem(invalid),true);return;}
   const hits = allergyHits();
   if (hits.length && allergyAckSig !== JSON.stringify(hits)) {
     renderAllergyBar();

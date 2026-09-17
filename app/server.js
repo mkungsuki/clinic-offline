@@ -75,6 +75,14 @@ function checkClock() {
 checkClock();
 setInterval(checkClock, 10 * 60 * 1000).unref();
 
+// Trial-only fixtures are absent from production packages. Each helper independently
+// checks install profile, exact data directory and demo_mode before writing once.
+if (!clockError) {
+  for (const [file, entry] of [['seed-trial-lots.js', 'ensureTrialLots'], ['seed-trial-dose-defaults.js', 'ensureTrialDoseDefaults']]) {
+    if (fs.existsSync(path.join(__dirname, file))) require('./' + file)[entry]();
+  }
+}
+
 // ---- ชุดทดลอง: เปิดวันใหม่ให้เอง (demo_mode เท่านั้น — ดู lib/demo-day.js) บูต + ทุก 10 นาที (จับข้ามเที่ยงคืน) ----
 // ห้ามเขียนตอน clock error (เหตุผลเดียวกับที่บล็อก HTTP write): จะสร้าง visit ที่เวลาย้อนหลังกว่าข้อมูลเดิม
 const demoDay = require('./lib/demo-day');

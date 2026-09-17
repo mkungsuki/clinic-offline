@@ -61,8 +61,22 @@ function noteVersions(visitId) {
 // เก็บ calculated_qty แยกจาก qty (จำนวนจ่ายจริง) เพื่อไม่ซ่อน manual override
 // ยา: ราคายึด master เสมอ | ค่าบริการ: หมอ override ราคาได้ (default จาก master)
 // ส่วนลด: เก็บเป็น line ติดลบใน order — ตอนออกบิล billing จะพับเข้า receipts.discount
-function sanitizeDose(d) {
+function sanitizeDose(d, dispenseUnit) {
   if (!d) return null;
+  if (typeof d !== 'object' || Array.isArray(d) || (d.mode != null && !['standard', 'exact_times', 'prn', 'interval', 'manual'].includes(d.mode))) throw err('เลือกรูปแบบสั่งยาให้ถูกต้อง');
+  // An empty optional UI field does not upgrade a legacy prescription's contract.
+  // New authored templates carry additional_instructions; a distinct dose unit is
+  // also explicit new data. Preserve legacy PRN snapshots during quantity edits.
+  const hasDoseUnit = typeof d.dose_unit === 'string' ? !!d.dose_unit.trim() : d.dose_unit != null;
+  const modern = Object.hasOwn(d, 'additional_instructions') || hasDoseUnit || d.mode === 'interval';
+  if (modern) {
+    const dose = require('../public/dose-template').normalize({ ...d, mode: d.mode || 'standard' }, dispenseUnit || d.unit || 'เม็ด');
+    if (dose.mode === 'manual' || dose.mode === 'interval' ||
+        (dose.mode === 'standard' && dose.m + dose.n + dose.e + dose.b > 0) ||
+        (dose.mode === 'exact_times' && dose.times.length) ||
+        (dose.mode === 'prn' && (dose.prn_amount || dose.prn_indication))) return dose;
+    return null;
+  }
   const num = x => { const v = Number(x); return isFinite(v) && v > 0 ? v : 0; };
   const mode = ['standard', 'exact_times', 'prn', 'manual'].includes(d.mode) ? d.mode : 'standard';
   const dose = {
@@ -88,16 +102,12 @@ function sanitizeDose(d) {
   return mode === 'manual' || hasStandard || hasExact || hasPrn ? dose : null;
 }
 // จำนวนจ่ายจริงปัดขึ้นเป็นหน่วยเต็ม (เม็ดครึ่งให้คนไข้หักเอง แต่จ่ายเป็นเม็ดเต็ม)
-function doseQty(dose) {
-  if (!dose || !['standard', 'exact_times'].includes(dose.mode || 'standard')) return 0;
-  const perDay = dose.mode === 'exact_times'
-    ? dose.times.reduce((s, x) => s + x.amount, 0)
-    : dose.m + dose.n + dose.e + dose.b;
-  return dose.days > 0 ? Math.ceil(perDay * dose.days) : 0;
+function doseQty(dose, unit) {
+  return require('../public/dose-template').quantity(dose, unit);
 }
 function doseText(dose, unit) {
-  if (Object.hasOwn(dose, 'additional_instructions')) return require('../public/dose-template').text(dose, unit);
-  const u = unit || 'เม็ด';
+  if (Object.hasOwn(dose, 'additional_instructions') || dose.mode === 'interval') return require('../public/dose-template').text(dose, unit);
+  const u = require('../public/dose-template').doseUnit(dose, unit || 'เม็ด');
   if (dose.mode === 'exact_times') {
     let t = dose.times.map(x => `${x.time} ${x.amount} ${u}`).join(' / ');
     if (dose.timing) t += ` ${dose.timing}`;
@@ -128,14 +138,17 @@ function buildLines(rawLines) {
     if (l.type === 'drug') {
       const d = db.prepare('SELECT * FROM drugs WHERE id = ? AND active = 1').get(l.ref_id);
       if (!d) throw err(`ไม่พบยา id ${l.ref_id}`, 404);
-      const dose = sanitizeDose(l.dose);
-      const calculatedQty = doseQty(dose);
-      const qty = calculatedQty > 0 && dose.qty_source !== 'manual' ? calculatedQty : Number(l.qty);
-      if (!qty || qty <= 0) throw err(`จำนวนไม่ถูกต้อง: ${d.name}`);
+      const dose = sanitizeDose(l.dose, d.unit);
+      const calculatedQty = doseQty(dose, d.unit);
+      const usesCalculated = calculatedQty > 0 && dose.qty_source !== 'manual';
+      const qty = usesCalculated ? calculatedQty : Number(l.qty);
+      if (!Number.isFinite(qty) || qty <= 0 || (!usesCalculated && !['number', 'string'].includes(typeof l.qty))) throw err(`ใส่จำนวนจ่ายจริงเป็น${d.unit}: ${d.name}`);
       // วิธีใช้: ที่ผู้ใช้พิมพ์ > ประกอบจาก dose > default ของยา
-      const instructions = (l.instructions && String(l.instructions).trim())
-        || (dose ? doseText(dose, d.unit) : '')
-        || d.default_instructions || '';
+      const generated = dose ? doseText(dose, d.unit) : '';
+      const structured = dose && Object.hasOwn(dose, 'additional_instructions');
+      const instructions = structured && dose.instructions_source !== 'manual'
+        ? generated
+        : (l.instructions && String(l.instructions).trim()) || generated || d.default_instructions || '';
       if (dose) dose.calculated_qty = calculatedQty || null;
       out.push({ type: 'drug', ref_id: d.id, name: d.name, qty, calculated_qty: calculatedQty || null, unit: d.unit,
         price_each: d.price, dose, instructions });
@@ -171,12 +184,14 @@ function validateFrontOrderEdit(previousLines, rawLines) {
     const cur = nextDrugs.find(l => l.ref_id === old.ref_id);
     if (!cur) throw err(`เปลี่ยนรายการยา ${old.name} ไม่ได้ กรุณาส่งกลับให้แพทย์แก้`, 403);
     if (cur.qty > old.qty) throw err(`เพิ่มจำนวน ${old.name} เกินคำสั่งแพทย์ไม่ได้`, 403);
-    const schedule = d => {
+    const schedule = (d, unit) => {
       if (!d) return null;
-      const x = { ...d }; delete x.qty_source; delete x.calculated_qty; delete x.instructions_source;
+      // Canonicalize both sides so an old saved template lacking optional fields
+      // can still have its dispensing quantity reduced. Never borrow new master defaults.
+      const x = { ...sanitizeDose(d, unit) }; delete x.qty_source; delete x.calculated_qty; delete x.instructions_source;
       return x;
     };
-    if ((cur.instructions || '') !== (old.instructions || '') || JSON.stringify(schedule(cur.dose)) !== JSON.stringify(schedule(old.dose))) {
+    if ((cur.instructions || '') !== (old.instructions || '') || JSON.stringify(schedule(cur.dose, cur.unit)) !== JSON.stringify(schedule(old.dose, old.unit))) {
       throw err(`แก้วิธีใช้ ${old.name} ไม่ได้ กรุณาส่งกลับให้แพทย์แก้`, 403);
     }
   }

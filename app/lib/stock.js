@@ -110,7 +110,9 @@ function upsertDrug(data, id = null) {
   const previous = id ? db.prepare('SELECT * FROM drugs WHERE id=?').get(id) : null;
   if (id && !previous) throw err('ไม่พบรายการยา', 404);
   const hasDefault = Object.hasOwn(data, 'default_dose');
-  const template = hasDefault ? DoseTemplate.normalize(data.default_dose, data.unit || 'เม็ด') : null;
+  const unit = data.unit || previous?.unit || 'เม็ด';
+  const template = hasDefault ? DoseTemplate.normalize(data.default_dose, unit) : null;
+  if (data.dose_mode != null && !['standard', 'exact_times', 'prn', 'interval', 'manual'].includes(data.dose_mode)) throw err('เลือกรูปแบบสั่งยาให้ถูกต้อง');
   if (!hasDefault && previous?.default_dose_json && ((data.unit && data.unit !== previous.unit) || (data.dose_mode && data.dose_mode !== previous.dose_mode))) throw err('หน่วยหรือรูปแบบยาเปลี่ยน กรุณาทวนตารางวิธีใช้เริ่มต้นก่อนบันทึก');
   if (!hasDefault && previous?.default_dose_json && Object.hasOwn(data, 'default_instructions') && data.default_instructions !== previous.default_instructions) throw err('กรุณาแก้วิธีใช้เริ่มต้นผ่านตารางขนาดยาแล้วบันทึกอีกครั้ง');
   const defaultJson = hasDefault ? (template ? JSON.stringify(template) : null) : previous?.default_dose_json || null;
@@ -118,8 +120,8 @@ function upsertDrug(data, id = null) {
   // client ที่ไม่ส่ง field มาเลย (เช่น import CSV) ต้องไม่ล้างค่าเดิม — ส่งค่าว่าง = ตั้งใจล้าง (กลับไปใช้ค่ากลาง)
   const hasWarn = 'expiry_warn_days' in data;
   const warnDays = hasWarn ? normalizeWarnDays(data.expiry_warn_days) : null;
-  const doseMode = template?.mode || (['standard', 'exact_times', 'prn', 'manual'].includes(data.dose_mode) ? data.dose_mode : previous?.dose_mode || 'standard');
-  const instructions = template ? DoseTemplate.text(template, data.unit) : (!hasDefault && previous?.default_dose_json ? previous.default_instructions : data.default_instructions || null);
+  const doseMode = template?.mode || (['standard', 'exact_times', 'prn', 'interval', 'manual'].includes(data.dose_mode) ? data.dose_mode : previous?.dose_mode || 'standard');
+  const instructions = template ? DoseTemplate.text(template, unit) : (!hasDefault && previous?.default_dose_json ? previous.default_instructions : data.default_instructions || null);
   const vals = [data.code || null, data.name.trim(), data.generic_name || null, data.unit || previous?.unit || 'เม็ด',
     round2(Number(data.price) || 0), cost, Number(data.reorder_level) || 0, instructions,
     doseMode, data.active === 0 ? 0 : 1];

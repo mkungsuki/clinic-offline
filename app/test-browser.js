@@ -647,6 +647,23 @@ async function runViewport({ edge, base, hostBase, cdpPort, viewport, checkHostD
       screenHeight: viewport.screenHeight,
     });
 
+    if (process.env.CLINIC_BROWSER_STOCK_ONLY === '1') {
+      await require('./test-stock-warnings-browser')({tab:page,origins:[hostBase,base],viewport,evaluate,waitExpression,clickControl:clickAppointmentControl});
+      return;
+    }
+    if (process.env.CLINIC_BROWSER_VITALS_ONLY === '1') {
+      await require('./test-vitals-browser')({tab:page,origins:[hostBase,base],viewport,evaluate,waitExpression,clickControl:clickAppointmentControl});
+      return;
+    }
+    if (process.env.CLINIC_BROWSER_DOSE_UNITS_ONLY === '1') {
+      await require('./test-dispensing-dose-units-browser')({tab:page,origins:[hostBase,base],viewport,evaluate,waitExpression,clickControl:clickAppointmentControl});
+      return;
+    }
+    if (process.env.CLINIC_BROWSER_RECORDING_ONLY === '1') {
+      await require('./test-stock-warnings-browser')({tab:page,origins:[hostBase,base],viewport,evaluate,waitExpression,clickControl:clickAppointmentControl});
+      await require('./test-recording-browser')({tab:page,origins:[hostBase,base],viewport,evaluate,waitExpression,clickControl:clickAppointmentControl});
+      return;
+    }
     if (process.env.CLINIC_BROWSER_TRIAL_TOOLS_ONLY === '1') {
       await require('./test-trial-tools-browser')({tab:page,origins:[hostBase,base],viewport,evaluate,waitExpression,clickControl:clickAppointmentControl});
       return;
@@ -989,6 +1006,8 @@ async function runViewport({ edge, base, hostBase, cdpPort, viewport, checkHostD
     await require('./test-solo-doctor-browser')({tab:front,origins:[hostBase,base],viewport,evaluate,waitExpression,clickControl:clickAppointmentControl});
     stage = 'ตารางวิธีใช้เริ่มต้น: คลังยาไปห้องตรวจ / คำตอบหาย / ข้อความเก่า';
     await require('./test-dose-defaults-browser')({tab:front,origins:[hostBase,base],viewport,evaluate,waitExpression,clickControl:clickAppointmentControl});
+    await require('./test-stock-warnings-browser')({tab:front,origins:[hostBase,base],viewport,evaluate,waitExpression,clickControl:clickAppointmentControl});
+    await require('./test-recording-browser')({tab:front,origins:[hostBase,base],viewport,evaluate,waitExpression,clickControl:clickAppointmentControl});
     await require('./test-backup-status-browser')({tab:front,origins:[hostBase,base],viewport,cloudDir:backupCloudDir,evaluate,waitExpression,clickControl:clickAppointmentControl});
     await require('./test-password-recovery-browser')({tab:front,origins:[hostBase,base],viewport,cloudDir:backupCloudDir,evaluate,waitExpression,clickControl:clickAppointmentControl});
     await require('./test-trial-tools-browser')({tab:front,origins:[hostBase,base],viewport,evaluate,waitExpression,clickControl:clickAppointmentControl});
@@ -1033,6 +1052,8 @@ async function runViewport({ edge, base, hostBase, cdpPort, viewport, checkHostD
   try {
     const seeded = spawnSync(process.execPath, ['--no-warnings', 'seed.js', '--demo'], { cwd: __dirname, env, encoding: 'utf8' });
     if (seeded.status !== 0) throw new Error(seeded.stderr || seeded.stdout || 'seed failed');
+    const trainingSeed=spawnSync(process.execPath,['--no-warnings','-e',"require('./seed-trial-lots').ensureTrialLots({freshSeed:true}); require('./seed-trial-dose-defaults').ensureTrialDoseDefaults({freshSeed:true}); require('./lib/db').db.close();"],{cwd:__dirname,env,encoding:'utf8',windowsHide:true});
+    if(trainingSeed.status!==0)throw Error(trainingSeed.stderr||'training fixture failed');
     const serviceSeed=spawnSync(process.execPath,['--no-warnings','-e',`const {db,today}=require('./lib/db');
 db.exec("INSERT INTO patients(hn,first_name,sex,created_at) VALUES('SERVICE-SYNTH','สังเคราะห์ต้นทุน','F','2020-03-15'); INSERT INTO visits(hn,visit_date,queue_no,state,created_by,created_at) VALUES('SERVICE-SYNTH','2020-03-15',1,'COMPLETED',1,'2020-03-15 12:00:00')");
 const v=db.prepare("SELECT id FROM visits WHERE hn='SERVICE-SYNTH'").get().id;
@@ -1142,7 +1163,15 @@ db.close();`],{cwd:__dirname,env,encoding:'utf8',windowsHide:true});
         backupCloudDir,
       });
     }
-    if (process.env.CLINIC_BROWSER_TRIAL_TOOLS_ONLY === '1') {
+    if (process.env.CLINIC_BROWSER_STOCK_ONLY === '1') {
+      console.log(`STOCK WARNINGS BROWSER PASS: ${VIEWPORTS.length}/${VIEWPORTS.length} focused, NOT the full browser gate`);
+    } else if (process.env.CLINIC_BROWSER_VITALS_ONLY === '1') {
+      console.log(`VITALS BROWSER PASS: ${VIEWPORTS.length}/${VIEWPORTS.length} focused, NOT the full browser gate`);
+    } else if (process.env.CLINIC_BROWSER_DOSE_UNITS_ONLY === '1') {
+      console.log(`DOSE UNITS BROWSER PASS: ${VIEWPORTS.length}/${VIEWPORTS.length} focused, NOT the full browser gate`);
+    } else if (process.env.CLINIC_BROWSER_RECORDING_ONLY === '1') {
+      console.log(`RECORDING BROWSER PASS: ${VIEWPORTS.length}/${VIEWPORTS.length} focused, NOT the full browser gate`);
+    } else if (process.env.CLINIC_BROWSER_TRIAL_TOOLS_ONLY === '1') {
       console.log(`TRIAL UI BROWSER PASS: ${VIEWPORTS.length}/${VIEWPORTS.length} focused; helper boundary mocked`);
     } else if (process.env.CLINIC_BROWSER_PASSWORD_ONLY === '1') {
       console.log(`PASSWORD BROWSER PASS: ${VIEWPORTS.length}/${VIEWPORTS.length} focused, NOT the full browser gate`);

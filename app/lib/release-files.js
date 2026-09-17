@@ -11,7 +11,7 @@ const TOOL_FILES = [
   'tools/run-backup.js',
   'tools/restore-cloud-backup.js',
 ];
-const TRIAL_SEED_FILES = ['seed-mock-day.js', 'seed-mock-clinic.js', 'seed-appointment-followup.js'];
+const TRIAL_SEED_FILES = ['seed-mock-day.js', 'seed-mock-clinic.js', 'seed-appointment-followup.js', 'seed-trial-lots.js', 'seed-trial-dose-defaults.js'];
 const FORBIDDEN_BASENAME = /^(test-|codex-|seed-mock)|recovery-key|\.(db|db-wal|db-shm|enc|key)$/i;
 const ALLOWED_RELEASE_EXTENSION = /\.(?:js|html|css|json|png|jpe?g|svg|ico|webp|cmd|ps1)$/i;
 

@@ -41,6 +41,13 @@
   }
 }
 * { box-sizing: border-box; }
+.vital-readings { display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;max-width:100%; }
+.vital-reading { display:inline-flex;flex-wrap:wrap;align-items:baseline;gap:5px;padding:5px 9px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);line-height:1.4; }
+.vital-label,.vital-unit { font-size:13px;color:var(--ink2); }
+.vital-value { font-size:20px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap; }
+.vital-reading.vwarn { background:#fee2e2;color:#991b1b;border-color:#dc2626; }
+.vital-reading.vwarn .vital-label,.vital-reading.vwarn .vital-unit { color:#991b1b; }
+.vital-reading.vwarn .vital-label::before { content:'⚠ '; }
 /* min-height (ไม่ใช่ height) — เดิม height:100% ทำให้กล่อง body สูงแค่ 1 จอ แถบ topbar ที่ sticky จึงหลุดหายเมื่อเลื่อนเกิน 1 จอบนหน้ายาว (พบ 2026-08-18 ตอนทำ sticky ห้องตรวจ) */
 html, body { margin: 0; min-height: 100%; }
 body { font-family: 'Leelawadee UI', 'Segoe UI', 'Sarabun', sans-serif; font-size: 15px;
@@ -148,6 +155,11 @@ textarea { resize: vertical; min-height: 64px; }
 .qrow .nm { font-weight: 600; }
 .qrow .sub { font-size: 12.5px; color: var(--dim); }
 .qrow .sp { flex: 1; }
+.qrow.front-patient-row { display:grid;grid-template-columns:40px minmax(0,1fr);align-items:start;gap:8px; }
+.front-patient-row > .vital-readings { grid-column:1/-1;margin-top:0;gap:6px; }
+.front-patient-row .vital-reading { padding:4px 6px;gap:4px; }
+.front-patient-row .vital-value { font-size:18px; }
+.front-patient-row .queue-actions { grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px;align-items:center; }
 /* เอกสารที่หมอออกไว้แต่ยังไม่ได้พิมพ์ที่หน้าร้าน — ต้องสะดุดตาแต่ไม่ใช่สีแดง (แดงสงวนไว้ให้ vitals/แพ้ยา) */
 .printwait { display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
   border: 1.5px solid #b45309; background: #fef3c7; color: #92400e;

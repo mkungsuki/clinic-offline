@@ -1,6 +1,7 @@
 'use strict';
 // Presentation only. Never parse free text into doses or read the current drug master.
 const { doseText } = require('./notes');
+const { doseUnit } = require('../public/dose-template');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const finite = x => typeof x === 'number' && Number.isFinite(x) && x >= 0;
 function provenDose(line, dose) {
@@ -37,7 +38,10 @@ function icon(kind) { return `<svg class="dose-icon" aria-hidden="true" focusabl
 const amount = n => Number.isInteger(n) ? String(n) : n===0.5 ? '½' : String(n);
 function doseVisual(dose, unit) {
   if (!dose) return '<div class="text-dose-label">อ่านตามข้อความ</div>';
-  const u=esc(unit), number=n=>`${esc(amount(n))} ${u}`;
+  // An interval is not a meal grid or necessarily PRN. Its immutable instruction
+  // remains visible in the medication sheet's ordinary text block.
+  if (!['standard','exact_times','prn'].includes(dose.mode)) return '<div class="text-dose-label">อ่านตามข้อความ</div>';
+  const u=esc(doseUnit(dose,unit)), number=n=>`${esc(amount(n))} ${u}`;
   if(dose.mode==='standard') {
     return `<div class="dose-visual" data-dose-mode="standard"><div class="dose-grid">${[['m','เช้า','morning'],['n','กลางวัน','noon'],['e','เย็น','evening'],['b','ก่อนนอน','bedtime']].map(([k,label,kind])=>`<div class="dose-cell${dose[k]?'':' no-dose'}"><div class="dose-slot-title">${icon(kind)}<span class="dose-time">${label}</span></div><div class="dose-amount">${dose[k]?number(dose[k]):'ไม่ต้องใช้'}</div></div>`).join('')}</div>${dose.timing||dose.days?`<div class="dose-detail">${[dose.timing, dose.days?`${dose.days} วัน`:''].filter(Boolean).map(esc).join(' · ')}</div>`:''}</div>`;
   }

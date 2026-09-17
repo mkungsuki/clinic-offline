@@ -383,14 +383,7 @@ async function openDocuments(hn) {
 
 // ---------- คิว ----------
 function vitalsSummary(v) {
-  // ค่าเกินเกณฑ์ = แดง (UAT B2 — เกณฑ์เดียวกับจอหมอ)
-  const parts = [];
-  if (v.weight_kg) parts.push(`${v.weight_kg} กก.`);
-  if (v.bp_sys) parts.push(`<span class="${v.bp_sys >= 140 || (v.bp_dia || 0) >= 90 ? 'vwarn' : ''}">BP ${v.bp_sys}/${v.bp_dia || '-'}</span>`);
-  if (v.temp_c) parts.push(`<span class="${v.temp_c >= 37.8 ? 'vwarn' : ''}">${v.temp_c}°C</span>`);
-  if (v.pulse) parts.push(`<span class="${v.pulse >= 110 ? 'vwarn' : ''}">P ${v.pulse}</span>`);
-  if (v.glucose) parts.push(`<span class="${v.glucose >= 126 ? 'vwarn' : ''}">DTX ${v.glucose}</span>`);
-  return parts.join(' · ');
+  return vitalReadings(v);
 }
 // ---------- เอกสารรอพิมพ์ (เครื่องพิมพ์อยู่ที่หน้าร้านเครื่องเดียว หมอออกใบที่ห้องตรวจแล้วพิมพ์เองไม่ได้) ----------
 function pendingDocBadges(v) {
@@ -470,16 +463,16 @@ function queueRow(v, faded = false) {
     <button class="btn sm ghost-red" onclick="cancelVisit(${v.id})">ยกเลิก</button>`;
   if (v.state === 'COMPLETED') actions = `
     <button class="btn sm" onclick="selectBill(${v.id})">ดูบิล</button>`;
-  return `<div class="qrow ${selVisitId === v.id ? 'sel' : ''} ${_calledIds.has(v.id) ? 'called' : ''}" ${faded ? 'style="opacity:.75"' : ''}>
+  return `<div class="qrow front-patient-row ${selVisitId === v.id ? 'sel' : ''} ${_calledIds.has(v.id) ? 'called' : ''}" ${faded ? 'style="opacity:.75"' : ''}>
     <div class="qno">${v.queue_no}</div>
     <div><div class="nm">${name}</div>
-      <div class="sub">HN ${esc(v.hn)}${v.chronic ? ' · ' + esc(v.chronic) : ''} ${vitalsSummary(v) ? '· ' + vitalsSummary(v) : ''}</div>
+      <div class="sub">HN ${esc(v.hn)}${v.chronic ? ' · ' + esc(v.chronic) : ''}</div>
       ${v.cc ? `<div class="sub">💬 ${esc(v.cc)}</div>` : ''}
       ${pendingDocBadges(v)}
       ${v.state === 'CANCELLED' && v.cancel_reason ? `<div class="sub">🚫 ${esc(v.cancel_reason)}</div>` : ''}</div>
-    <div class="sp"></div>
-    <span class="chip st-${v.state}">${stateTH(v.state)}</span>${v.state==='IN_EXAM'?doctorChip(v,'กำลังตรวจโดย'):''}
-    ${actions}
+    ${vitalsSummary(v)}
+    <div class="queue-actions"><span class="chip st-${v.state}">${stateTH(v.state)}</span>${v.state==='IN_EXAM'?doctorChip(v,'กำลังตรวจโดย'):''}
+    ${actions}</div>
   </div>
   <div class="hidden card" id="vitals-${v.id}"></div>`;
 }

@@ -10,13 +10,36 @@
   .drug-default-fields input,.drug-default-fields select { width:100%;min-width:0; }
   .dose-time-default { display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:6px;align-items:end;margin-bottom:8px; }
   #drugDosePreview { overflow-wrap:anywhere; }
-  .cols { grid-template-columns: 1fr 380px; }
+  .cols { grid-template-columns: minmax(0,1fr) 380px; }
+  .cols > .stack { min-width:0; }
   @media (max-width: 1000px) { .cols { grid-template-columns: 1fr; } }
   .low { color: var(--red); font-weight: 700; }
   .expired { color: var(--red); font-weight: 700; }
   .expiring { color: #b45309; font-weight: 700; }
-  .warn-days { font-size: 13px; font-weight: 400; color: #555; white-space: nowrap; }
-  .warn-days input { width: 64px; }
+  .stock-toolbar { display:flex;align-items:end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px; }
+  .stock-toolbar h2 { margin:0; }
+  .stock-search { flex:0 1 280px;margin:0!important; }
+  .stock-warning-panel { padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--surface2);margin-bottom:12px; }
+  .stock-warning-panel h3 { margin:0 0 6px;font-size:14px; }
+  .stock-warning-panel p { margin:6px 0; }
+  .stock-warning-controls { display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px; }
+  .stock-warning-controls label { display:flex;align-items:center;gap:8px;flex-wrap:wrap; }
+  .stock-warning-controls input { width:96px;min-height:44px; }
+  .stock-warning-controls .btn { min-height:44px; }
+  #warnDaysStatus { margin-top:6px;overflow-wrap:anywhere; }
+  .stock-warning-fields { padding:10px;border:1px solid var(--line);border-radius:9px; }
+  .stock-warning-fields .muted { display:block;font-size:12px;line-height:1.5;margin:4px 0 10px; }
+  .stock-table-wrap { overflow-x:auto; }
+  .stock-lot-link { display:block;min-height:44px;text-decoration:none;color:inherit; }
+  #stockCountSummary:not(:empty),#expirySummary:not(:empty) { margin-bottom:8px; }
+  .lot-actions { display:flex;gap:8px;flex-wrap:wrap;margin-top:10px; }
+  .lot-actions .btn { min-height:44px;flex:1 1 160px; }
+  #modalBack:has(#stockMovesDialog) { align-items:center;padding:12px; }
+  .modal-box:has(#stockMovesDialog) { width:min(880px,96vw);max-height:calc(100dvh - 24px);overflow:auto; }
+  #stockMovesTitle { overflow-wrap:anywhere; }
+  .stock-moves-body { max-height:min(52vh,440px);overflow:auto;margin:10px 0; }
+  #stockMovesTable { min-width:480px; }
+  #stockMovesDialog .btn { min-height:44px; }
   .service-form { display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);gap:10px; }
   .service-form input { width:100%;min-width:0; }
   #serviceCard { scroll-margin-top:80px; }
@@ -28,13 +51,22 @@
 <div class="cols">
   <div class="stack">
     <div class="card">
-      <h2>คลังยา <span class="row" style="align-items:center;gap:10px">
-        <label class="warn-days" title="ยาที่ตั้งเกณฑ์ของตัวเองไว้ (ในฟอร์มแก้ยา/ตอนรับเข้า) ใช้เกณฑ์ของยานั้นแทน">⏰ เตือนใกล้หมดอายุล่วงหน้า (ค่ากลาง)
-          <input type="number" id="warnDays" min="1" max="3650" onchange="saveWarnDays()"> วัน</label>
-        <input type="text" id="filter" placeholder="กรอง..." style="width:180px">
-      </span></h2>
-      <div id="expirySummary" class="muted" style="margin-bottom:6px"></div>
-      <table class="t" id="drugTable"></table>
+      <div class="stock-toolbar">
+        <h2>คลังยา</h2>
+        <label class="f stock-search"><span>ค้นหายาในคลัง</span><input type="text" id="filter" placeholder="ชื่อยา / ชื่อสามัญ"></label>
+      </div>
+      <section class="stock-warning-panel" aria-labelledby="expirySettingTitle">
+        <h3 id="expirySettingTitle">⏰ เตือนวันหมดอายุของยา</h3>
+        <p class="muted" id="warnDaysHelp">ใช้วันหมดอายุที่บันทึกไว้ของแต่ละล็อต เช่น ตั้ง 90 วัน จะเตือนเมื่อเหลือไม่เกิน 90 วันก่อนหมดอายุ ยาที่ตั้งจำนวนวันเฉพาะไว้จะใช้ค่านั้นแทน</p>
+        <div class="stock-warning-controls">
+          <label for="warnDays">ค่าเริ่มต้นสำหรับยาที่ยังไม่ได้ตั้งเฉพาะ <input type="number" id="warnDays" min="1" max="3650" aria-describedby="warnDaysHelp warnDaysStatus"> วันล่วงหน้า</label>
+          <button class="btn" id="saveWarnDaysBtn" onclick="saveWarnDays()">บันทึกจำนวนวัน</button>
+        </div>
+        <div id="warnDaysStatus" role="status" aria-live="polite"></div>
+      </section>
+      <div id="stockCountSummary" class="muted"></div>
+      <div id="expirySummary" class="muted"></div>
+      <div class="stock-table-wrap"><table class="t" id="drugTable"></table></div>
     </div>
     <div class="card" id="serviceCard">
       <h2>ค่าบริการ / หัตถการ</h2>
@@ -61,19 +93,24 @@
         <label class="f"><span>ชื่อยา (ที่ขึ้นฉลาก/ใบเสร็จ) *</span><input type="text" id="d_name"></label>
         <div class="row">
           <label class="f"><span>ชื่อสามัญ</span><input type="text" id="d_generic"></label>
-          <label class="f" style="flex:0 0 90px"><span>หน่วย</span><input type="text" id="d_unit" value="เม็ด"></label>
+          <label class="f" style="flex:1"><span>หน่วยที่จ่าย / คิดราคา / ตัดสต็อก</span><input type="text" id="d_unit" value="เม็ด" placeholder="เช่น เม็ด, ขวด"></label>
         </div>
         <div class="row">
           <label class="f"><span>ราคาขาย/หน่วย *</span><input type="number" step="0.25" id="d_price"></label>
           <label class="f"><span>ราคาทุน/หน่วย</span><input type="number" step="0.01" id="d_cost" placeholder="ไว้คิดกำไร"></label>
-          <label class="f"><span>จุดเตือนใกล้หมด</span><input type="number" id="d_reorder" value="10"></label>
         </div>
-        <label class="f"><span>เตือนใกล้หมดอายุล่วงหน้าเฉพาะยานี้ (วัน — ว่าง = ค่ากลาง · วันหมดอายุกรอกเป็นราย lot ตอนรับเข้า)</span><input type="number" id="d_warn" min="1" max="3650" placeholder="ตาม supplier"></label>
+        <div class="stock-warning-fields">
+          <label class="f"><span id="drugReorderLabel">เตือนเมื่อจำนวนคงเหลือไม่เกิน (เม็ด)</span><input type="number" id="d_reorder" min="0" value="10" aria-describedby="drugReorderHelp"></label>
+          <span class="muted" id="drugReorderHelp"></span>
+          <label class="f"><span>เตือนก่อนหมดอายุเฉพาะยานี้ (วัน)</span><input type="number" id="d_warn" min="1" max="3650" aria-describedby="drugWarnHelp"></label>
+          <span class="muted" id="drugWarnHelp"></span>
+        </div>
         <label class="f"><span>คำแนะนำเพิ่มเติม / วิธีใช้เดิม</span><input type="text" id="d_instr" placeholder="คำแนะนำเพิ่มเติม — ตั้งขนาดยาในตารางด้านล่าง"></label>
         <label class="f"><span>รูปแบบสั่งยาเริ่มต้น</span><select id="d_dose_mode">
           <option value="standard">เวลามาตรฐาน — เช้า/เที่ยง/เย็น/ก่อนนอน</option>
           <option value="exact_times">ระบุเวลา — เช่น Levodopa</option>
           <option value="prn">เมื่อมีอาการ (PRN)</option>
+          <option value="interval">ทุกกี่ชั่วโมง / ช่วงชั่วโมง</option>
           <option value="manual">คำสั่งพิเศษ / ระบุจำนวนเอง</option>
         </select></label>
         <div id="drugDoseEditor"></div>
@@ -85,10 +122,9 @@
         </div>
       </div>
     </div>
-    <div class="card hidden" id="moveCard"></div>
     <div class="card">
       <h2>Import ยาจาก CSV <span class="muted">(admin — seed วันแรก)</span></h2>
-      <p class="muted">รูปแบบ: ชื่อยา,หน่วย,ราคาขาย,จำนวนตั้งต้น,จุดเตือน,ราคาทุน (บรรทัดละตัว — ทุนเว้นได้)</p>
+      <p class="muted">รูปแบบ: ชื่อยา,หน่วย,ราคาขาย,จำนวนตั้งต้น,จำนวนคงเหลือที่ให้เตือน,ราคาทุน (บรรทัดละตัว — ทุนเว้นได้) จำนวนที่ให้เตือนใช้หน่วยเดียวกับยา ไม่ใช่จำนวนล็อตหรือวันหมดอายุ</p>
       <textarea id="csv" rows="5" placeholder="Paracetamol 500mg,เม็ด,2,500,100,0.5&#10;Amoxicillin 500mg,แคปซูล,5,300,50,2.5"></textarea>
       <button class="btn mt" onclick="importCSV()">Import</button>
       <div class="muted" id="importResult"></div>
@@ -110,13 +146,10 @@ async function load() {
   const settings = await api('GET', '/api/settings');
   warnDays = Number(settings.stock_expiry_warn_days) >= 1 ? Number(settings.stock_expiry_warn_days) : 90;
   document.getElementById('warnDays').value = warnDays;
+  if (!document.getElementById('warnDaysStatus').textContent) setWarnDaysStatus(`กำลังใช้ค่าเริ่มต้น ${warnDays} วันล่วงหน้า`);
+  updateStockWarningHelp();
   render();
-  // "เด้งเตือน" ตามที่หมอขอ: เข้าหน้านี้แล้วมีของเข้าเกณฑ์ ให้บอกทันทีโดยไม่ต้องกวาดตาหาเอง (เด้งเฉพาะตอนโหลด)
-  const expired = drugs.filter(d => expiryState(d) === 'expired').length;
-  const expiring = drugs.filter(d => expiryState(d) === 'expiring').length;
-  if (expired || expiring) {
-    toast(`⏰ ยา${expired ? `หมดอายุแล้ว ${expired} รายการ` : ''}${expired && expiring ? ' · ' : ''}${expiring ? `ใกล้หมดอายุ ${expiring} รายการ` : ''} — ดูแถบเตือนเหนือตารางคลังยา`, expired > 0);
-  }
+  // สถานะวันหมดอายุค้างอยู่เหนือรายการยา ไม่ซ้ำเป็นกล่องที่บังฟอร์มรับเข้าหรือประวัติ.
 }
 // สถานะหมดอายุ: 'expired' = เลยวันแล้ว (ไม่ขึ้นกับเกณฑ์), 'expiring' = ภายในเกณฑ์เตือน, '' = ปกติ/ไม่ระบุ
 // เกณฑ์ = ของยาตัวนั้น (supplier แต่ละยาต่างกัน — หมอขอ 2026-08-31) ถ้าไม่ได้ตั้งใช้ค่ากลาง
@@ -135,17 +168,17 @@ function thDateOnly(iso) {
 }
 function expiryCell(d) {
   // ทั้งช่องคลิกได้ = เปิดกล่อง lot ของยาตัวนั้น (ดู/ปิด/แก้/เพิ่ม lot)
-  const lotsNote = d.active_lots > 1 ? `<br><span class="muted" style="font-weight:400">${d.active_lots} lot</span>` : '';
+  const lotsNote = d.active_lots > 1 ? `<br><span class="muted" style="font-weight:400">มี ${d.active_lots} ล็อตที่ยังไม่ปิด</span>` : '';
   let inner;
-  if (!d.expiry_date) inner = '<span class="muted">— <u>เพิ่ม lot</u></span>';
+  if (!d.expiry_date) inner = '<span class="muted">ยังไม่มีวันหมดอายุ<br><u>เพิ่มล็อต</u></span>';
   else {
     const state = expiryState(d);
     const days = expiryDaysLeft(d);
     if (state === 'expired') inner = `<span class="expired">${thDateOnly(d.expiry_date)}<br>หมดอายุแล้ว</span>${lotsNote}`;
-    else if (state === 'expiring') inner = `<span class="expiring">${thDateOnly(d.expiry_date)}<br>อีก ${days} วัน</span>${lotsNote}`;
+    else if (state === 'expiring') inner = `<span class="expiring">${thDateOnly(d.expiry_date)}<br>ใกล้หมดอายุ · ${days === 0 ? 'หมดอายุวันนี้' : `อีก ${days} วัน`}</span>${lotsNote}`;
     else inner = `${thDateOnly(d.expiry_date)}${lotsNote}`;
   }
-  return `<a href="javascript:void(0)" onclick="openLots(${d.id})" title="ดู/จัดการ lot ของยานี้" style="text-decoration:none;color:inherit">${inner}</a>`;
+  return `<a class="stock-lot-link" href="javascript:void(0)" onclick="openLots(${d.id})" title="ดูวันหมดอายุและจัดการล็อตของยานี้">${inner}</a>`;
 }
 
 // กล่อง lot ต่อยา: เรียงตามวันหมดอายุ (ตัวใกล้สุด = ตัวที่ระบบใช้เตือน) — ปิด lot ที่หมด/เก็บออกแล้ว
@@ -159,61 +192,66 @@ async function openLots(id, showCleared = false) {
     const state = l.cleared_at ? '' : days < 0 ? 'expired' : days <= warnLimit(d) ? 'expiring' : '';
     const status = l.cleared_at ? `<span class="muted">ปิดแล้ว ${thDate(l.cleared_at)}${l.cleared_reason ? ' · ' + esc(l.cleared_reason) : ''}</span>`
       : state === 'expired' ? '<span class="expired">หมดอายุแล้ว</span>'
-      : state === 'expiring' ? `<span class="expiring">อีก ${days} วัน</span>` : `อีก ${days} วัน`;
+      : state === 'expiring' ? `<span class="expiring">ใกล้หมดอายุ · ${days === 0 ? 'หมดอายุวันนี้' : `อีก ${days} วัน`}</span>` : `ยังไม่ถึงช่วงเตือน · อีก ${days} วัน`;
     return `<tr ${l.cleared_at ? 'style="opacity:.55"' : ''}>
       <td class="${state}">${thDateOnly(l.expiry_date)}</td>
-      <td>${esc(l.lot_label || '')}<div class="muted" style="font-size:12px">${l.qty_received != null ? `รับ ${l.qty_received} ${esc(d.unit || '')} · ` : ''}${thDate(l.received_at)}${l.received_by_name ? ' · ' + esc(l.received_by_name) : ''}</div></td>
+      <td>${esc(l.lot_label || 'ไม่ได้ระบุเลขล็อต')}<div class="muted" style="font-size:12px">${l.qty_received != null ? `จำนวนรับครั้งนั้น ${l.qty_received} ${esc(d.unit || '')} (ไม่ใช่ยอดเหลือล็อต) · ` : ''}${thDate(l.received_at)}${l.received_by_name ? ' · ' + esc(l.received_by_name) : ''}</div></td>
       <td>${status}</td>
       <td>${l.cleared_at ? '' : `<button class="btn sm" onclick="editLot(${id},${l.id},'${esc(l.expiry_date)}','${esc(l.lot_label || '')}')">แก้</button>
         <button class="btn sm ghost-red" onclick="clearLotAsk(${id},${l.id})">เก็บออกแล้ว</button>`}</td></tr>`;
   };
-  openModal(`<h2>📦 lot ของ ${esc(d.name)}</h2>
-    <div class="muted" style="margin-bottom:6px">ระบบเตือนจาก lot ที่ใกล้หมดสุด — lot ไหนหมด/เก็บออกจากตู้แล้ว กด "เก็บออกแล้ว" ตัวถัดไปจะเลื่อนขึ้นมาเตือนแทนเอง<br>ปิด lot ไม่กระทบจำนวนคงเหลือ — ถ้านับของแล้วยอดเปลี่ยน ใช้ปุ่ม "ปรับยอด" ตามเดิม</div>
-    <table class="t"><tr><th>หมดอายุ</th><th>lot / ที่มา</th><th>สถานะ</th><th></th></tr>
-    ${lots.map(row).join('') || `<tr><td colspan="4" class="muted">ยังไม่มี lot ${showCleared ? '' : 'ที่เปิดอยู่'} — กรอกวันหมดอายุตอน "+รับเข้า" หรือกด "เพิ่ม lot" สำหรับของที่อยู่ในตู้แล้ว</td></tr>`}</table>
-    <div class="row" style="margin-top:10px">
-      <button class="btn green" onclick="addLotAsk(${id})">➕ เพิ่ม lot (ของที่อยู่ในตู้แล้ว)</button>
-      <button class="btn sm" onclick="openLots(${id}, ${!showCleared})">${showCleared ? 'ซ่อน lot ที่ปิดแล้ว' : 'ดู lot ที่ปิดแล้ว'}</button>
+  openModal(`<h2>📦 ล็อต (lot) ของ ${esc(d.name)}</h2>
+    <div class="muted" id="lotGuide" style="margin-bottom:10px">ล็อตคือยาจากกล่องหรือรอบที่มีวันหมดอายุเดียวกัน หน้านี้บันทึกวันหมดอายุ ไม่ได้แยกจำนวนคงเหลือตามล็อต<br>
+      จำนวนคงเหลือรวม ${d.qty_on_hand} ${esc(d.unit || 'หน่วย')} · เตือนก่อนหมดอายุ ${warnLimit(d)} วัน (${d.expiry_warn_days == null ? 'ใช้ค่าเริ่มต้นของคลังยา' : 'ตั้งเฉพาะยานี้'})<br>
+      ตารางคลังยาแสดงวันหมดอายุที่ใกล้ที่สุดจากล็อตที่ยังไม่ปิด เมื่อใช้ล็อตนั้นหมดหรือเก็บออกจากตู้แล้ว กด "เก็บออกแล้ว" จึงแสดงล็อตถัดไป<br>
+      ปิดล็อตไม่ตัดจำนวนคงเหลือ ถ้าเก็บยาทิ้ง ให้นับของที่เหลือแล้วใช้ปุ่ม "ปรับยอด" ด้วย</div>
+    <div class="stock-table-wrap"><table class="t" id="lotTable"><tr><th>วันหมดอายุ</th><th>เลขล็อต / ที่มา</th><th>สถานะ</th><th></th></tr>
+    ${lots.map(row).join('') || `<tr><td colspan="4" class="muted">ยังไม่มีล็อต${showCleared ? '' : 'ที่ยังไม่ปิด'}ให้ดู · รับยาใหม่ให้กรอกวันหมดอายุในปุ่ม "+รับเข้า" ส่วนยาที่มีอยู่แล้วใช้ "เพิ่มล็อต" เพื่อบันทึกวันหมดอายุโดยไม่เพิ่มจำนวนยา</td></tr>`}</table></div>
+    <div class="lot-actions">
+      <button class="btn green" onclick="addLotAsk(${id})">➕ เพิ่มล็อต (ยาที่มีอยู่แล้ว)</button>
+      <button class="btn sm" onclick="openLots(${id}, ${!showCleared})">${showCleared ? 'ซ่อนล็อตที่ปิดแล้ว' : 'ดูล็อตที่ปิดแล้ว'}</button>
       <button class="btn" onclick="closeModal()">ปิด</button></div>`);
 }
 function clearLotAsk(drugId, lotId) {
   openAsk({
-    title: 'ปิด lot นี้ (หมด/เก็บออกจากตู้แล้ว)',
+    title: 'ปิดล็อตนี้ (ใช้หมดหรือเก็บออกจากตู้แล้ว)',
+    intro: 'บันทึกว่าล็อตนี้ไม่อยู่ในตู้แล้ว และแสดงล็อตถัดไปแทน จำนวนคงเหลือรวมไม่เปลี่ยน ถ้าเก็บยาทิ้งต้องนับของแล้วกด "ปรับยอด" ด้วย',
     fields: [{ id: 'mReason', label: 'เหตุผล (ไม่บังคับ)', placeholder: 'เช่น ใช้หมด, เก็บทำลายเพราะหมดอายุ' }],
-    okText: 'ปิด lot',
+    okText: 'ปิดล็อต',
     onOk: v => api('POST', `/api/lots/${lotId}/clear`, { reason: v.mReason })
-      .then(() => { toast('ปิด lot แล้ว — lot ถัดไป (ถ้ามี) จะเป็นตัวเตือนแทน'); load(); openLots(drugId); })
+      .then(() => { toast('ปิดล็อตแล้ว — แสดงล็อตถัดไป (ถ้ามี) จำนวนยาไม่ได้ถูกหักออก'); load(); openLots(drugId); })
       .catch(e => toast(e.message, true)),
   });
 }
 function editLot(drugId, lotId, expiry, label) {
   openAsk({
-    title: 'แก้ lot (กรณีคีย์ผิด)',
+    title: 'แก้ข้อมูลล็อต (กรณีกรอกผิด)',
     fields: [
       { id: 'mExpiry', label: 'วันหมดอายุ', type: 'date', value: expiry },
-      { id: 'mLot', label: 'เลข lot ข้างกล่อง (ไม่บังคับ)', value: label },
+      { id: 'mLot', label: 'เลขล็อต (lot) ข้างกล่อง (ไม่บังคับ)', value: label },
     ],
     okText: 'บันทึก',
     onOk: v => {
       if (!v.mExpiry) { toast('เลือกวันหมดอายุก่อน', true); return; }
       api('PATCH', `/api/lots/${lotId}`, { expiry_date: v.mExpiry, lot_label: v.mLot })
-        .then(() => { toast('แก้ lot แล้ว'); load(); openLots(drugId); })
+        .then(() => { toast('แก้ข้อมูลล็อตแล้ว'); load(); openLots(drugId); })
         .catch(e => toast(e.message, true));
     },
   });
 }
 function addLotAsk(drugId) {
   openAsk({
-    title: 'เพิ่ม lot (ของที่อยู่ในตู้อยู่แล้ว — ไม่เพิ่มยอดสต็อก)',
+    title: 'เพิ่มล็อตของยาที่มีอยู่แล้ว',
+    intro: 'บันทึกวันหมดอายุจากกล่องยาที่อยู่ในตู้ จำนวนคงเหลือรวมจะไม่เพิ่ม ถ้าเพิ่งรับยาใหม่ให้ใช้ปุ่ม "+รับเข้า"',
     fields: [
-      { id: 'mExpiry', label: 'วันหมดอายุของ lot นี้', type: 'date' },
-      { id: 'mLot', label: 'เลข lot ข้างกล่อง (ไม่บังคับ)' },
+      { id: 'mExpiry', label: 'วันหมดอายุของล็อตนี้', type: 'date' },
+      { id: 'mLot', label: 'เลขล็อต (lot) ข้างกล่อง (ไม่บังคับ)' },
     ],
-    okText: 'เพิ่ม lot',
+    okText: 'เพิ่มล็อต',
     onOk: v => {
       if (!v.mExpiry) { toast('เลือกวันหมดอายุก่อน', true); return; }
       api('POST', `/api/drugs/${drugId}/lots`, { expiry_date: v.mExpiry, lot_label: v.mLot })
-        .then(() => { toast('เพิ่ม lot แล้ว'); load(); openLots(drugId); })
+        .then(() => { toast('เพิ่มล็อตแล้ว จำนวนยาเท่าเดิม'); load(); openLots(drugId); })
         .catch(e => toast(e.message, true));
     },
   });
@@ -221,19 +259,22 @@ function addLotAsk(drugId) {
 function render() {
   const f = document.getElementById('filter').value.trim().toLowerCase();
   const list = drugs.filter(d => !f || d.name.toLowerCase().includes(f) || (d.generic_name || '').toLowerCase().includes(f));
+  const lowStock = drugs.filter(d => d.qty_on_hand <= d.reorder_level);
+  document.getElementById('stockCountSummary').textContent = lowStock.length
+    ? `⚠ ทั้งคลังมีจำนวนยาเหลือน้อย ${lowStock.length} ชนิด — จำนวนคงเหลือถึงจุดที่ตั้งไว้ ดูคอลัมน์ "คงเหลือ" เพื่อวางแผนรับเพิ่ม` : '';
   const expired = drugs.filter(d => expiryState(d) === 'expired');
   const expiring = drugs.filter(d => expiryState(d) === 'expiring');
   document.getElementById('expirySummary').innerHTML = (expired.length || expiring.length)
-    ? `${expired.length ? `<span class="expired">🔴 หมดอายุแล้ว ${expired.length} รายการ</span> ` : ''}` +
-      `${expiring.length ? `<span class="expiring">🟡 ใกล้หมดอายุตามเกณฑ์ ${expiring.length} รายการ</span>` : ''}` +
-      ' — ดูคอลัมน์ "หมดอายุ" แล้วเก็บออก/วางแผนสั่งใหม่'
+    ? `ทั้งคลัง: ${expired.length ? `<span class="expired">🔴 มีล็อตหมดอายุแล้ว ${expired.length} ชนิดยา</span> ` : ''}` +
+      `${expiring.length ? `<span class="expiring">🟡 มีล็อตใกล้หมดอายุ ${expiring.length} ชนิดยา</span>` : ''}` +
+      ' — ดูคอลัมน์ "วันหมดอายุ" แล้วกดดูล็อตที่ต้องตรวจ'
     : '';
   document.getElementById('drugTable').innerHTML =
-    `<tr><th>ชื่อยา</th><th class="num">คงเหลือ</th><th>หมดอายุ</th><th class="num">ขาย</th><th class="num">ทุน</th><th></th></tr>` +
-    (list.map(d => `<tr>
+    `<tr><th>ชื่อยา</th><th class="num">คงเหลือ</th><th>วันหมดอายุ / ล็อต</th><th class="num">ขาย</th><th class="num">ทุน</th><th></th></tr>` +
+    (list.map(d => `<tr data-drug-id="${d.id}">
       <td><b>${esc(d.name)}</b>${d.generic_name ? ` <span class="muted">${esc(d.generic_name)}</span>` : ''}</td>
       <td class="num ${d.qty_on_hand <= d.reorder_level ? 'low' : ''}">${d.qty_on_hand} ${esc(d.unit || '')}
-        ${d.qty_on_hand <= d.reorder_level ? '⚠' : ''}${d.qty_on_hand < 0 ? '<div class="muted">ติดลบ — นับสต็อกด่วน</div>' : ''}</td>
+        ${d.qty_on_hand <= d.reorder_level ? `<div class="low">⚠ จำนวนเหลือน้อย</div><div class="muted">เตือนที่ ≤ ${d.reorder_level} ${esc(d.unit || 'หน่วย')}</div>` : ''}${d.qty_on_hand < 0 ? '<div class="muted">ติดลบ — นับสต็อกด่วน</div>' : ''}</td>
       <td>${expiryCell(d)}</td>
       <td class="num money">${baht(d.price)}</td>
       <td class="num money">${d.cost != null ? baht(d.cost) : '<span class="muted" title="ยังไม่ใส่ทุน — รายงานจะแสดงต้นทุนไม่ครบ">—</span>'}</td>
@@ -251,21 +292,68 @@ function render() {
 }
 document.getElementById('filter').addEventListener('input', render);
 
+function updateStockWarningHelp() {
+  const unit = document.getElementById('d_unit').value.trim() || 'หน่วย';
+  const threshold = document.getElementById('d_reorder').value;
+  document.getElementById('drugReorderLabel').textContent = `เตือนเมื่อจำนวนคงเหลือไม่เกิน (${unit})`;
+  document.getElementById('drugReorderHelp').textContent = `นับจำนวนยารวมทุกล็อต เช่น ตั้ง ${threshold !== '' ? threshold : 10} ${unit} จะเตือนเมื่อเหลือเท่านี้หรือน้อยกว่า ไม่ใช่จำนวนล็อตหรือวันหมดอายุ`;
+  const customDays = document.getElementById('d_warn').value;
+  document.getElementById('d_warn').placeholder = `เว้นว่าง = ใช้ ${warnDays} วัน`;
+  document.getElementById('drugWarnHelp').textContent = customDays !== ''
+    ? `เมื่อบันทึก ยานี้จะเตือนก่อนวันหมดอายุ ${customDays} วัน โดยดูวันหมดอายุที่บันทึกของแต่ละล็อต ล้างช่องนี้เพื่อกลับไปใช้ค่าเริ่มต้น ${warnDays} วัน`
+    : `เว้นว่าง = ใช้ค่าเริ่มต้น ${warnDays} วัน โดยดูวันหมดอายุที่บันทึกของแต่ละล็อต กรอกวันที่บนกล่องตอนรับยาหรือเพิ่มล็อต`;
+}
+for (const id of ['d_unit','d_reorder','d_warn']) document.getElementById(id).addEventListener('input', updateStockWarningHelp);
+function setWarnDaysStatus(message, error = false) {
+  const el = document.getElementById('warnDaysStatus');
+  el.textContent = message;
+  el.classList.toggle('danger', error);
+}
+document.getElementById('warnDays').addEventListener('input', () => {
+  setWarnDaysStatus(`ยังไม่ได้บันทึก — กำลังใช้ค่าเริ่มต้น ${warnDays} วัน กด "บันทึกจำนวนวัน" เพื่อเปลี่ยน`);
+});
+updateStockWarningHelp();
+
 // เกณฑ์เตือนเป็น setting กลาง (เครื่องหน้าร้าน/ห้องตรวจเห็นเลขเดียวกัน) — แก้แล้วมีผลทั้งตารางทันที
 async function saveWarnDays() {
   const el = document.getElementById('warnDays');
+  const button = document.getElementById('saveWarnDaysBtn');
+  if (button.disabled) return;
   const days = Number(el.value);
   if (!Number.isInteger(days) || days < 1 || days > 3650) {
-    toast('จำนวนวันเตือนล่วงหน้าต้องเป็นตัวเลข 1–3650 วัน', true);
-    el.value = warnDays;
+    setWarnDaysStatus('ยังไม่ได้บันทึก — ใส่จำนวนเต็ม 1–3650 วัน แล้วกดบันทึกอีกครั้ง', true);
+    el.focus();
     return;
   }
+  button.disabled = true;
+  el.disabled = true;
+  setWarnDaysStatus('กำลังบันทึกจำนวนวันเตือนก่อนหมดอายุ…');
+  const confirmed = (checked = false) => {
+    warnDays = days;
+    el.value = days;
+    updateStockWarningHelp();
+    setWarnDaysStatus(`${checked ? 'ตรวจพบว่าบันทึกแล้ว' : 'บันทึกแล้ว'} — ใช้ค่าเริ่มต้น ${days} วันล่วงหน้า ยาที่ตั้งเฉพาะไว้ใช้ค่าเดิมของยานั้น`);
+    render();
+  };
   try {
     await api('POST', '/api/stock/expiry-warning', { days });
-    warnDays = days;
-    toast(`ตั้งเตือนล่วงหน้า ${days} วันแล้ว`);
-    render();
-  } catch (e) { toast(e.message, true); el.value = warnDays; }
+    confirmed();
+  } catch (e) {
+    // Setting an absolute number is idempotent. Read back after a lost reply before claiming failure.
+    try {
+      const settings = await api('GET', '/api/settings');
+      const saved = Number(settings.stock_expiry_warn_days) >= 1 ? Number(settings.stock_expiry_warn_days) : 90;
+      if (saved === days) confirmed(true);
+      else {
+        warnDays = saved;
+        updateStockWarningHelp();
+        render();
+        setWarnDaysStatus(`ยังไม่ได้เปลี่ยนเป็น ${days} วัน — กำลังใช้ ${saved} วัน กด "บันทึกจำนวนวัน" เพื่อลองอีกครั้ง`, true);
+      }
+    } catch {
+      setWarnDaysStatus(`ยังยืนยันผลไม่ได้ — ค่าที่ต้องการคือ ${days} วัน กด "บันทึกจำนวนวัน" เพื่อตรวจและบันทึกซ้ำได้`, true);
+    }
+  } finally { button.disabled = false; el.disabled = false; }
 }
 
 // คลังยามาตรฐาน (UAT รอบ 2): ฐานอ้างอิงให้ดัด — เติมฟอร์มเฉยๆ ยังไม่เข้าคลังจริงจนกว่าจะใส่ราคาแล้วกดบันทึกเอง
@@ -303,6 +391,7 @@ function pickCatalogDrug(json) {
   document.getElementById('d_name').value = d.name;
   document.getElementById('d_generic').value = d.generic_name || '';
   document.getElementById('d_unit').value = d.unit || 'เม็ด';
+  updateStockWarningHelp();
   document.getElementById('d_instr').value = DoseTemplate.read(d)?.additional_instructions ?? d.default_instructions ?? '';
   resetStockDose(DoseTemplate.read(d), d.dose_mode || 'standard');
   closeModal();
@@ -323,13 +412,13 @@ function receive(id) {
   const opId = crypto.randomUUID();
   openAsk({
     title: `📦 รับยาเข้า — ${esc(d.name)}`,
-    intro: `คงเหลือตอนนี้ ${d.qty_on_hand} ${esc(d.unit || '')}`,
+    intro: `จำนวนคงเหลือรวมตอนนี้ ${d.qty_on_hand} ${esc(d.unit || 'หน่วย')} · รับเข้าจะเพิ่มจำนวนยาตามที่กรอก<br>ถ้ามีวันหมดอายุ ระบบจะบันทึกล็อตของรอบนี้ไว้ให้ตรวจในตารางคลังยา ยาที่รับเข้าหลายวันหมดอายุให้แยกรับทีละล็อต`,
     fields: [
-      { id: 'mQty', label: `รับเข้ากี่${d.unit || 'หน่วย'}`, type: 'number' },
-      { id: 'mCost', label: `ทุนต่อหน่วยรอบนี้ (ปัจจุบัน ${d.cost != null ? d.cost : 'ยังไม่ใส่'} — เว้นว่าง = ไม่เปลี่ยน)`, type: 'number' },
-      { id: 'mExpiry', label: 'วันหมดอายุของ lot รอบนี้ (ระบบจะเก็บแยกทุก lot แล้วเตือน lot ที่ใกล้หมดสุดให้เอง)', type: 'date' },
-      { id: 'mLot', label: 'เลข lot ข้างกล่อง (ไม่บังคับ — ช่วยให้หาถูกกล่องตอนเก็บออก)' },
-      { id: 'mWarn', label: `เตือนล่วงหน้าเฉพาะยานี้ (ตอนนี้ ${d.expiry_warn_days != null ? d.expiry_warn_days : `ค่ากลาง ${warnDays}`} วัน — เว้นว่าง = ไม่เปลี่ยน)`, type: 'number' },
+      { id: 'mQty', label: `จำนวนที่รับเข้า (${d.unit || 'หน่วย'} ไม่ใช่จำนวนล็อต)`, type: 'number' },
+      { id: 'mCost', label: `ทุนต่อ${d.unit || 'หน่วย'}รอบนี้ (บาท ปัจจุบัน ${d.cost != null ? d.cost : 'ยังไม่ใส่'} — เว้นว่าง = ไม่เปลี่ยน)`, type: 'number' },
+      { id: 'mExpiry', label: 'วันหมดอายุบนกล่องของล็อตนี้ (เว้นว่างจะไม่มีวันให้เตือน)', type: 'date' },
+      { id: 'mLot', label: 'เลขล็อต (lot) บนกล่อง (ไม่บังคับ — ช่วยหากล่องที่ต้องเก็บออก)' },
+      { id: 'mWarn', label: `เตือนก่อนหมดอายุเฉพาะยานี้ (วัน) — ตอนนี้${d.expiry_warn_days != null ? `ตั้งเฉพาะ ${d.expiry_warn_days}` : `ใช้ค่าเริ่มต้น ${warnDays}`} วัน เว้นว่าง = ใช้เดิม แก้ได้ในฟอร์มยา`, type: 'number' },
     ],
     okText: 'รับเข้า',
     onOk: v => {
@@ -344,9 +433,9 @@ function receive(id) {
         .then(() => {
           closeModal();
           // บอกให้ครบว่ารอบนี้บันทึกอะไรไปบ้าง — ผู้ใช้ต้องไม่ต้องเดาว่า lot "ไปบันทึกไว้ที่ไหน"
-          const extra = [body.expiry_date ? `บันทึก lot ใหม่ หมดอายุ ${thDateOnly(body.expiry_date)}` : '',
-            body.expiry_warn_days ? `เตือนล่วงหน้า ${body.expiry_warn_days} วัน` : ''].filter(Boolean).join(' · ');
-          toast(`รับ ${esc(d.name)} เข้า ${qty} ${esc(d.unit || '')} แล้ว${extra ? ' · ' + extra : ''} — ดู/แก้ lot ได้ที่คอลัมน์ "หมดอายุ"`);
+          const extra = [body.expiry_date ? `บันทึกล็อตใหม่ หมดอายุ ${thDateOnly(body.expiry_date)}` : 'ยังไม่มีวันหมดอายุของรอบนี้ให้เตือน',
+            body.expiry_warn_days ? `เตือนก่อนหมดอายุ ${body.expiry_warn_days} วัน` : ''].filter(Boolean).join(' · ');
+          toast(`รับ ${esc(d.name)} เข้า ${qty} ${esc(d.unit || '')} แล้ว${extra ? ' · ' + extra : ''} — ดู/เพิ่มล็อตได้ที่คอลัมน์ "วันหมดอายุ"`);
           load();
         })
         .catch(e => {
@@ -362,7 +451,7 @@ function adjust(id) {
     title: `🔢 ปรับยอดตามนับจริง — ${esc(d.name)}`,
     intro: `ระบบว่ามี ${d.qty_on_hand} ${esc(d.unit || '')}`,
     fields: [
-      { id: 'mNewQty', label: 'นับจริงได้กี่หน่วย', type: 'number' },
+      { id: 'mNewQty', label: `จำนวนที่นับจริงรวมทุกล็อต (${d.unit || 'หน่วย'})`, type: 'number' },
       { id: 'mReason', label: 'เหตุผล', placeholder: 'เช่น นับสต็อกประจำเดือน, ยาแตก/หมดอายุ' },
     ],
     okText: 'ปรับยอด',
@@ -386,6 +475,7 @@ function editDrug(id) {
   document.getElementById('d_cost').value = d.cost != null ? d.cost : '';
   document.getElementById('d_reorder').value = d.reorder_level;
   document.getElementById('d_warn').value = d.expiry_warn_days != null ? d.expiry_warn_days : '';
+  updateStockWarningHelp();
   document.getElementById('d_instr').value = DoseTemplate.read(d)?.additional_instructions ?? d.default_instructions ?? '';
   resetStockDose(DoseTemplate.read(d), d.dose_mode || 'standard');
 }
@@ -394,6 +484,7 @@ function clearForm() {
   ['d_id', 'd_name', 'd_generic', 'd_price', 'd_cost', 'd_warn', 'd_instr'].forEach(x => document.getElementById(x).value = '');
   document.getElementById('d_unit').value = 'เม็ด';
   document.getElementById('d_reorder').value = 10;
+  updateStockWarningHelp();
   resetStockDose(null, 'standard');
 }
 async function saveDrug() {
@@ -427,7 +518,7 @@ async function retryDrugSave(){
  try{
   const saved=await api(p.id?'PATCH':'POST','/api/drugs'+(p.id?'/'+p.id:''),p.body);
   pendingDrugSave=null;sessionStorage.removeItem('clinic_drug_save');clearForm();
-  drugSaveStatus('บันทึก “'+p.body.name+'” แล้ว ค่าเริ่มต้นใช้ตอนเลือกยาใหม่ ไม่แก้คำสั่งยาที่ออกแล้ว');toast('บันทึกรายการยาแล้ว');
+  drugSaveStatus('บันทึก “'+p.body.name+'” แล้ว ค่าเริ่มต้นใช้ตอนเลือกยาใหม่ ไม่แก้คำสั่งยาที่ออกแล้ว');
   try{await load();}catch{drugSaveStatus('บันทึกแล้ว แต่โหลดตารางไม่สำเร็จ กรุณาเปิดหน้านี้ใหม่เพื่อตรวจรายการ');}
  }catch(e){
   if(e.status>=400&&e.status<500&&![401,423].includes(e.status)){pendingDrugSave=null;sessionStorage.removeItem('clinic_drug_save');drugSaveStatus(e.message);}
@@ -437,17 +528,48 @@ async function retryDrugSave(){
 }
 if(pendingDrugSave)drugSaveStatus('มีรายการยาที่ยังไม่ได้รับคำตอบ กรุณากดตรวจผลก่อนบันทึกใหม่',true);
 
+let stockMovesId = null, stockMovesRequest = 0;
+function closeStockMoves() {
+  const id = stockMovesId;
+  stockMovesId = null;
+  stockMovesRequest++;
+  closeModal();
+  document.querySelector(`button[onclick="showMoves(${id})"]`)?.focus();
+}
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && document.getElementById('stockMovesDialog')) { event.preventDefault(); closeStockMoves(); }
+});
+document.addEventListener('click', event => {
+  if (event.target.id === 'modalBack' && document.getElementById('stockMovesDialog')) { event.stopPropagation(); closeStockMoves(); }
+}, true);
 async function showMoves(id) {
   const d = drugs.find(x => x.id === id);
-  const moves = await api('GET', `/api/drugs/${id}/movements`);
-  const card = document.getElementById('moveCard');
-  card.classList.remove('hidden');
-  const th = { receive: 'รับเข้า', dispense: 'จ่าย', adjust: 'ปรับยอด', void_return: 'คืนจาก void' };
-  card.innerHTML = `<h2>ประวัติ: ${esc(d.name)} <button class="btn sm" onclick="this.closest('.card').classList.add('hidden')">ปิด</button></h2>
-    <table class="t"><tr><th>เวลา</th><th>ประเภท</th><th class="num">จำนวน</th><th>อ้างอิง</th></tr>
-    ${moves.map(m => `<tr><td>${thDate(m.created_at)}</td><td>${th[m.type] || m.type}</td>
-      <td class="num">${m.qty > 0 ? '+' : ''}${m.qty}</td>
-      <td class="muted">${esc(m.ref || '')} ${esc(m.reason || '')} · ${esc(m.by_name || '')}</td></tr>`).join('')}</table>`;
+  if (!d) return;
+  const request = ++stockMovesRequest;
+  stockMovesId = id;
+  openModal(`<section id="stockMovesDialog" role="dialog" aria-modal="true" aria-labelledby="stockMovesTitle">
+    <h2 id="stockMovesTitle">ประวัติรับ–จ่ายยา: ${esc(d.name)}</h2>
+    <div class="muted">รายการรับเข้า จ่าย และปรับยอดของยานี้ · จำนวนแสดงเป็น${esc(d.unit || 'หน่วย')} · ดูประวัติได้อย่างเดียว</div>
+    <div id="stockMovesStatus" role="status" aria-live="polite">กำลังโหลดประวัติยา…</div>
+    <div class="stock-moves-body"><table class="t" id="stockMovesTable"></table></div>
+    <div class="row"><button class="btn hidden" id="retryStockMoves" onclick="showMoves(${id})">ลองโหลดประวัติอีกครั้ง</button>
+      <button class="btn" id="closeStockMoves" onclick="closeStockMoves()">ปิดประวัติ</button></div>
+  </section>`);
+  document.getElementById('closeStockMoves').focus();
+  try {
+    const moves = await api('GET', `/api/drugs/${id}/movements`);
+    if (request !== stockMovesRequest || !document.getElementById('stockMovesDialog')) return;
+    const th = { receive: 'รับเข้า', dispense: 'จ่าย', adjust: 'ปรับยอด', void_return: 'คืนจากยกเลิกบิล' };
+    document.getElementById('stockMovesTable').innerHTML = `<tr><th>เวลา</th><th>ประเภท</th><th class="num">จำนวน (${esc(d.unit || 'หน่วย')})</th><th>อ้างอิง / เหตุผล / ผู้บันทึก</th></tr>` +
+      moves.map(m => `<tr><td>${thDate(m.created_at)}</td><td>${esc(th[m.type] || m.type)}</td>
+        <td class="num">${m.qty > 0 ? '+' : ''}${m.qty} ${esc(d.unit || 'หน่วย')}</td>
+        <td class="muted">${esc(m.ref || '')} ${esc(m.reason || '')} · ${esc(m.by_name || '')}</td></tr>`).join('');
+    document.getElementById('stockMovesStatus').textContent = moves.length ? `แสดง ${moves.length} รายการล่าสุด` : 'ยังไม่มีประวัติรับ–จ่ายของยานี้';
+  } catch (error) {
+    if (request !== stockMovesRequest || !document.getElementById('stockMovesDialog')) return;
+    document.getElementById('stockMovesStatus').textContent = 'ยังโหลดประวัติไม่ได้ กดลองโหลดอีกครั้งได้ ข้อมูลยาไม่ได้เปลี่ยน';
+    document.getElementById('retryStockMoves').classList.remove('hidden');
+  }
 }
 async function addService() {
   const name = document.getElementById('svcName').value.trim();
@@ -491,7 +613,6 @@ async function retryServiceSave() {
     closeModal();
     if (pending.id == null) for (const id of ['svcName','svcPrice','svcCost']) document.getElementById(id).value = '';
     serviceStatus('บันทึก “' + pending.body.name + '” แล้ว ต้นทุนนี้ใช้กับบิลใหม่ บิลเก่าไม่เปลี่ยน');
-    toast('บันทึกราคาและทุนแล้ว');
     try { await load(); } catch { serviceStatus('บันทึกแล้ว แต่โหลดตารางไม่สำเร็จ กรุณาเปิดหน้านี้ใหม่เพื่อตรวจรายการ'); }
   } catch(e) {
     if (e.status >= 400 && e.status < 500 && e.status !== 401 && e.status !== 423) {

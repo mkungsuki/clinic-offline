@@ -14,6 +14,20 @@ function doctorSelect(id, selected, label = 'นัดกับ', empty = 'ไ�
 }
 function chosenDoctor(id) { const e=document.getElementById(id); return e ? {doctor_id:e.value?Number(e.value):null}:{}; }
 
+// Shared visible readings: a recorded normal value is primary information too.
+// Warning thresholds are the existing queue thresholds, not new clinical rules.
+function vitalReadings(v) {
+  const rows = [];
+  const add = (label, value, unit, warning = false) => rows.push(`<span class="vital-reading${warning ? ' vwarn' : ''}"><span class="vital-label">${label}</span><strong class="vital-value">${esc(String(value))}</strong><span class="vital-unit">${unit}</span></span>`);
+  if (v.bp_sys) add('ความดัน (BP)', `${v.bp_sys}/${v.bp_dia || '—'}`, 'มม.ปรอท', v.bp_sys >= 140 || (v.bp_dia || 0) >= 90);
+  if (v.pulse) add('ชีพจร', v.pulse, 'ครั้ง/นาที', v.pulse >= 110);
+  if (v.temp_c) add('อุณหภูมิ', v.temp_c, '°C', v.temp_c >= 37.8);
+  if (v.weight_kg) add('น้ำหนัก', v.weight_kg, 'กก.');
+  if (v.height_cm) add('ส่วนสูง', v.height_cm, 'ซม.');
+  if (v.glucose) add('น้ำตาล (DTX)', v.glucose, 'mg/dL', v.glucose >= 126);
+  return rows.length ? `<div class="vital-readings" role="group" aria-label="ค่าที่บันทึกในการตรวจครั้งนี้">${rows.join('')}</div>` : '';
+}
+
 async function api(method, url, body) {
   let res;
   try {
@@ -215,6 +229,9 @@ function esc(s) {
 
 // ---------- modal กลาง: แทน prompt()/confirm() ของเบราว์เซอร์ทุกจุด (UAT C) ----------
 function openModal(html) {
+  // The new dialog shows the next task; past success notices must not cover its
+  // controls. Keep errors and durable result/retry panels visible.
+  document.querySelectorAll('#toast .m:not(.err)').forEach(message => message.remove());
   document.dispatchEvent(new Event('clinic:modal-opening'));
   let back = document.getElementById('modalBack');
   if (!back) {

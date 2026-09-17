@@ -271,6 +271,8 @@ if (db.prepare('SELECT COUNT(*) c FROM fav_sets').get().c === 0) {
 }
 
 require('./seed-appointment-followup').seedAppointmentFollowup();
+require('./seed-trial-lots').ensureTrialLots({ freshSeed: true });
+require('./seed-trial-dose-defaults').ensureTrialDoseDefaults({ freshSeed: true });
 
 const summary = {
   patients: db.prepare('SELECT COUNT(*) c FROM patients').get().c,
