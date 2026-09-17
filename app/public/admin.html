@@ -29,6 +29,8 @@
   .document-choice .choice-mark { visibility: hidden; }
   .document-choice [aria-pressed="true"] .choice-mark { visibility: visible; }
   .document-choice button:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+  #clinicRegistrationLink { min-height: 44px; text-decoration: none; text-align: center; }
+  #clinicRegistrationLink:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
   @media (max-width: 900px) {
     .admin-layout { grid-template-columns: minmax(0, 1fr); }
     .admin-menu { position: static; }
@@ -347,6 +349,11 @@
 <section class="card hidden" id="aboutCard" data-admin-section="system" style="max-width:1100px;margin:16px auto;overflow-wrap:anywhere" aria-labelledby="aboutTitle">
   <h2 id="aboutTitle">เกี่ยวกับโปรแกรม</h2>
   <p>ระบบคลินิก Offline · รุ่น <span id="aboutVersion">กำลังอ่านรุ่น…</span></p>
+  <div style="margin:16px 0;padding:16px;border:1px solid var(--line);border-radius:12px">
+    <p style="margin:0 0 12px">บอกเราเกี่ยวกับคลินิกและข้อเสนอแนะ เพื่อช่วยพัฒนาโปรแกรม — กรอกโดยสมัครใจ ไม่กรอกก็ใช้โปรแกรมได้ครบ</p>
+    <a class="btn primary" id="clinicRegistrationLink" href="https://docs.google.com/forms/d/e/1FAIpQLSdpPcchhOSzRuLKIygUNW9-cuN3uYnni0SV4O2GkpFsAILxZA/viewform" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" aria-describedby="clinicRegistrationHelp">ลงทะเบียนคลินิก (สมัครใจ)</a>
+    <p id="clinicRegistrationHelp" style="margin:10px 0 0">เปิด Google Forms ในแท็บใหม่ · ต้องเชื่อมต่ออินเทอร์เน็ต</p>
+  </div>
   <p>แจกฟรีภายใต้ AGPL-3.0 · อ่านสัญญาอนุญาตฉบับเต็มได้จากไฟล์ LICENSE ในโฟลเดอร์โปรแกรม</p>
   <p><a href="https://github.com/mkungsuki/clinic-offline" rel="noreferrer">github.com/mkungsuki/clinic-offline</a> (เปิดเว็บไซต์เมื่อมีอินเทอร์เน็ต)</p>
   <p>สนับสนุนตามศรัทธา ไม่บังคับ ไม่มีฟีเจอร์ล็อก</p>

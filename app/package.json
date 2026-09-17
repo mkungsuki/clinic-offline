@@ -1,6 +1,6 @@
 {
   "name": "clinic-offline",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "license": "AGPL-3.0-only",
   "repository": "https://github.com/mkungsuki/clinic-offline",
   "description": "ระบบบริหารคลินิกแบบ offline 2 เครื่อง — zero dependency (node:http + node:sqlite)",
