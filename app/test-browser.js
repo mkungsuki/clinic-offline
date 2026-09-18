@@ -86,7 +86,7 @@ async function verifyAdminPages(tab, origins, viewport, cdpPort) {
     await waitExpression(tab, `document.readyState==='complete' && !!document.querySelector('#go')`, 'admin login page');
     await evaluate(tab, `document.querySelector('#u').value='admin';document.querySelector('#p').value='admin1234';document.querySelector('#go').click();true`, true);
     await waitExpression(tab, `location.pathname==='/admin.html' && typeof adminReady!=='undefined' && adminReady`, 'admin must land in settings');
-    const sections=['clinic','printing','users','connections','backup','system','advanced'];
+    const sections=['clinic','printing','users','connections','backup','audit','system','advanced'];
     for (const section of sections) {
       await clickAppointmentControl(tab, `#adminNav a[href="/admin.html?section=${section}"]`);
       await waitExpression(tab, `typeof adminReady!=='undefined' && adminReady && adminSection===${JSON.stringify(section)}`, 'admin category '+section);
@@ -194,7 +194,101 @@ async function verifyAdminPages(tab, origins, viewport, cdpPort) {
     await evaluate(tab,`document.querySelector('#u').value=${JSON.stringify(accountName)};document.querySelector('#p').value='Synthetic-ui-new-123';document.querySelector('#go').click();true`,true);
     await waitExpression(tab,`typeof adminReady!=='undefined'&&adminReady`,'new password works');
     console.log('  PASS account reset: actual submit → visible reauthentication → new login @'+viewport.dpr+' '+new URL(origin).hostname);
-    console.log('  PASS admin pages '+new URL(origin).hostname+' @'+viewport.dpr+': 7 categories, scoped save, lost reply, unsaved cancel/discard, 6 direct URLs');
+    console.log('  PASS admin pages '+new URL(origin).hostname+' @'+viewport.dpr+': 8 categories, scoped save, lost reply, unsaved cancel/discard, 6 direct URLs');
+  }
+}
+
+async function verifyAuditView(tab, origins, viewport) {
+  for (const origin of origins) {
+    // The caller owns the isolated synthetic server and fresh browser profile.
+    await tab.send('Page.navigate',{url:origin+'/login.html'});
+    await waitExpression(tab,`!!document.querySelector('#go')`,'audit front login');
+    await evaluate(tab,`document.querySelector('#u').value='front';document.querySelector('#p').value='front123';document.querySelector('#go').click();true`,true);
+    await waitExpression(tab,`typeof ME!=='undefined'&&ME?.role==='front'&&location.pathname!='/login.html'`,'audit front ready');
+    const fixture=await evaluate(tab,`(async()=>{
+      const name='ประวัติสังเคราะห์'+Date.now();
+      const patient=await api('POST','/api/patients',{first_name:name,last_name:'ชื่อซ้ำ',sex:'F',phone:'0800000000'});
+      const other=await api('POST','/api/patients',{first_name:name,last_name:'ชื่อซ้ำ',sex:'F',phone:'0800000001'});
+      await api('PATCH','/api/patients/'+patient.hn,{phone:'0800000099'});
+      const drug=await api('POST','/api/drugs',{name,unit:'เม็ด',price:2,cost:1});
+      await api('PATCH','/api/drugs/'+drug.id,{name,unit:'เม็ด',price:3,cost:1});
+      for(let i=1;i<=55;i++)await api('POST','/api/drugs/'+drug.id+'/adjust',{new_qty:i,reason:'นับยาสังเคราะห์ '+i});
+      return {name,hn:patient.hn,other:other.hn};
+    })()`,true);
+    await tab.send('Page.navigate',{url:origin+'/admin.html?section=audit'});
+    await waitExpression(tab,`typeof ME!=='undefined'&&ME?.role==='front'&&!document.querySelector('#aboutCard').classList.contains('hidden')`,'front audit URL stays About');
+    if(!await evaluate(tab,`!document.querySelector('#auditView').dataset.mounted&&getComputedStyle(document.querySelector('#adminControls')).display==='none'`))throw Error('front mounted audit view');
+    await tab.send('Page.navigate',{url:origin+'/login.html'});
+    await waitExpression(tab,`!!document.querySelector('#go')`,'audit admin login');
+    await evaluate(tab,`document.querySelector('#u').value='admin';document.querySelector('#p').value='admin1234';document.querySelector('#go').click();true`,true);
+    await waitExpression(tab,`typeof adminReady!=='undefined'&&adminReady`,'audit admin ready');
+    await clickAppointmentControl(tab,'#adminNav a[href="/admin.html?section=audit"]');
+    const ready=`document.querySelector('#auditResults')?.getAttribute('aria-busy')==='false'&&document.querySelector('#auditStatus')?.textContent.startsWith('ค้นแล้ว')`;
+    await waitExpression(tab,ready,'audit default groups');
+    if(!await evaluate(tab,`document.querySelectorAll('#auditResults > .audit-group').length===6&&[...document.querySelectorAll('.audit-group')].every(g=>g.querySelectorAll('.audit-row').length<=3)`))throw Error('all audit must be six groups, not a combined timeline');
+    const search=async q=>{await evaluate(tab,`document.querySelector('#auditQuery').value=${JSON.stringify(q)};document.querySelector('#auditSearchForm').requestSubmit();true`,true);await waitExpression(tab,ready,'audit search');};
+    await search(fixture.name);
+    await waitExpression(tab,`!document.querySelector('#auditCandidates').hidden&&document.querySelectorAll('#auditCandidates button').length===2`,'duplicate patient chooser');
+    await clickAppointmentControl(tab,'#auditCandidates button');
+    await waitExpression(tab,ready,'selected HN');
+    if(!await evaluate(tab,`[${JSON.stringify(fixture.hn)},${JSON.stringify(fixture.other)}].includes(document.querySelector('#auditQuery').value)`))throw Error('candidate did not select stable HN');
+    await search(fixture.name);
+    for(const [quick,category] of [['adjust','stock'],['price','stock'],['void','money'],['patient','patient']]) {
+      await clickAppointmentControl(tab,'[data-audit-quick="'+quick+'"]');
+      await waitExpression(tab,ready,'audit quick '+quick);
+      if(!await evaluate(tab,`document.querySelector('[data-audit-category="${category}"]').getAttribute('aria-pressed')==='true'&&document.querySelector('#auditQuery').value===${JSON.stringify(fixture.name)}`))throw Error('quick question lost category or query '+quick);
+      if(!await evaluate(tab,`(()=>{const r=document.querySelector('#auditStatus').getBoundingClientRect(),bar=document.querySelector('.topbar').getBoundingClientRect();return r.top>=bar.bottom&&r.bottom<=innerHeight;})()`))throw Error('audit quick answer is not visible below topbar');
+    }
+    await clickAppointmentControl(tab,'[data-audit-quick="adjust"]');await waitExpression(tab,ready,'audit adjust');
+    if(!await evaluate(tab,`document.querySelectorAll('.audit-row').length===50&&!document.querySelector('#auditMore').hidden`))throw Error('audit initial50 missing');
+    await clickAppointmentControl(tab,'#auditMore');await waitExpression(tab,ready,'audit more');
+    if(!await evaluate(tab,`(()=>{const rows=[...document.querySelectorAll('.audit-row')];return rows.length===55&&new Set(rows.map(r=>r.dataset.key)).size===55&&document.querySelector('#auditMore').hidden;})()`))throw Error('audit showmore must replace 50 with55 unique rows');
+    // Keyboard opens the actual native disclosure; a failed detail remains retryable in place.
+    await evaluate(tab,`window.auditOriginalApi=api;window.auditFailDetail=true;api=async(m,u,b)=>{if(u.startsWith('/api/admin/audit-detail')&&auditFailDetail){auditFailDetail=false;throw Error('synthetic detail failure');}return auditOriginalApi(m,u,b);};document.querySelector('.audit-row summary').focus();true`);
+    await tab.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r',unmodifiedText:'\r'});await tab.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+    try { await waitExpression(tab,`!!document.querySelector('.audit-row[open] .audit-detail [role="alert"]')`,'audit inline detail failure'); }
+    catch(error) { throw Error(error.message+' '+JSON.stringify(await evaluate(tab,`({open:document.querySelector('.audit-row')?.open,active:document.activeElement?.outerHTML,detail:document.querySelector('.audit-detail')?.textContent,failFlag:window.auditFailDetail})`))); }
+    await clickAppointmentControl(tab,'.audit-row[open] .audit-detail button');
+    await waitExpression(tab,`document.querySelector('.audit-row[open] .audit-detail').textContent.includes('นับยาสังเคราะห์')`,'audit detail retry outcome');
+    const detailGeometry=await evaluate(tab,`(()=>{const d=document.querySelector('.audit-row[open]');d.scrollIntoView({block:'start'});return {overflow:document.documentElement.scrollWidth>innerWidth+2,outside:[...d.querySelectorAll('dd')].some(e=>e.getBoundingClientRect().right>innerWidth+2)};})()`);
+    if(detailGeometry.overflow||detailGeometry.outside)throw Error('audit details overflow '+JSON.stringify(detailGeometry));
+    const detailOutput=path.join(__dirname,'../output/audit-view-evidence');fs.mkdirSync(detailOutput,{recursive:true});
+    const detailShot=await tab.send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(detailOutput,`detail-${viewport.screenWidth}-${viewport.dpr}-${new URL(origin).hostname}.png`),Buffer.from(detailShot.data,'base64'));
+    await evaluate(tab,`api=auditOriginalApi;true`);
+    // Real routine switch must send important=0, not merely omit the default.
+    await clickAppointmentControl(tab,'#auditClear');await waitExpression(tab,ready,'audit clear');
+    await clickAppointmentControl(tab,'[data-audit-category="account"]');await waitExpression(tab,ready,'audit account');
+    await clickAppointmentControl(tab,'#auditIncludeRoutine');await waitExpression(tab,ready,'audit include routine');
+    if(!await evaluate(tab,`document.querySelector('#auditResults').textContent.includes('เข้าสู่ระบบสำเร็จ')&&!document.querySelector('#auditAccountSummary').hidden`))throw Error('routine login events/old account summary missing');
+    for(const category of ['document','backup']) {
+      await clickAppointmentControl(tab,'[data-audit-category="'+category+'"]');await waitExpression(tab,ready,'audit category '+category);
+      if(!await evaluate(tab,`document.querySelectorAll('#auditResults > .audit-group').length===1&&document.querySelector('.audit-group').dataset.category==='${category}'`))throw Error('audit wrong single category '+category);
+    }
+    if(!await evaluate(tab,`!document.querySelector('#auditRestore').hidden&&document.querySelector('#auditRestore').textContent.includes('ผลการกู้ที่ตัวช่วยบันทึกไว้')`))throw Error('backup category must show evidence-bounded restore status');
+    await clickAppointmentControl(tab,'#auditClear');await waitExpression(tab,ready,'audit reset defaults');
+    await clickAppointmentControl(tab,'[data-audit-period="today"]');await waitExpression(tab,ready,'audit today');
+    await clickAppointmentControl(tab,'[data-audit-period="30"]');await waitExpression(tab,ready,'audit30days');
+    await clickAppointmentControl(tab,'[data-audit-period="custom"]');
+    await evaluate(tab,`document.querySelector('#auditFrom').value='2026-09-18';document.querySelector('#auditTo').value='2026-09-17';document.querySelector('#auditSearchForm').requestSubmit();true`,true);
+    await waitExpression(tab,`!document.querySelector('#auditError').hidden&&document.querySelector('#auditError').textContent.includes('วันสิ้นสุด')`,'invalid dates visible');
+    await clickAppointmentControl(tab,'#auditClear');await waitExpression(tab,ready,'audit clear after invalid');
+    // Deferred reads prove an older response cannot replace a later query. HTML remains literal text.
+    await evaluate(tab,`(async()=>{window.auditDeferred=[];window.auditBaseResult=await api('GET','/api/admin/audit?category=all&important=0');api=async(m,u,b)=>{if(u.startsWith('/api/admin/audit?'))return new Promise(resolve=>auditDeferred.push(resolve));return auditOriginalApi(m,u,b);};document.querySelector('#auditQuery').value='คำค้นเก่า';document.querySelector('#auditSearchForm').requestSubmit();document.querySelector('#auditQuery').value='คำค้นใหม่';document.querySelector('#auditSearchForm').requestSubmit();return true;})()`,true);
+    if(!await evaluate(tab,`auditDeferred.length===2&&document.querySelector('#auditResults').getAttribute('aria-busy')==='true'&&document.querySelectorAll('.audit-row').length===0`))throw Error('audit loading retains stale results');
+    await evaluate(tab,`(()=>{const data=structuredClone(auditBaseResult);data.groups=[{key:'patient',total:1,hidden:0,rows:[{key:'synthetic:1',time:'2026-09-18 12:00:00',actor:'ผู้ทดสอบ',summary:'ผลใหม่ <img src=x onerror=window.auditXss=true>',reference:'สังเคราะห์'}]}];data.total=1;data.hidden=0;data.logHealth={write_failures_since_boot:2};data.restore={state:'rolled-back',message:'นำข้อมูลก่อนกู้กลับมาแล้ว',caveat:'ยังไม่ยืนยันที่มาของข้อมูลปัจจุบัน'};auditDeferred[1](data);return true;})()`);
+    await waitExpression(tab,ready,'audit later response');
+    await evaluate(tab,`(()=>{const data=structuredClone(auditBaseResult);data.groups=[];auditDeferred[0](data);api=auditOriginalApi;return true;})()`);
+    await waitExpression(tab,`document.querySelector('#auditResults').textContent.includes('ผลใหม่ <img')&&!document.querySelector('#auditResults img')&&!window.auditXss`,'audit stale response and escaping');
+    if(!await evaluate(tab,`!document.querySelector('#auditRestore').hidden&&document.querySelector('#auditRestore').textContent.includes('นำข้อมูลก่อนกู้กลับมาแล้ว')&&!document.querySelector('#auditLogHealth').hidden&&document.querySelector('#auditLogHealth').textContent.includes('2 ครั้ง')&&document.querySelector('#auditLogHealth').textContent.includes('ครั้งนี้')`))throw Error('restore rollback or since-boot missing-history warning hidden');
+    await evaluate(tab,`api=async(m,u,b)=>{if(u.startsWith('/api/admin/audit?'))throw Error('synthetic failed search');return auditOriginalApi(m,u,b);};document.querySelector('#auditSearchForm').requestSubmit();true`,true);
+    await waitExpression(tab,`!document.querySelector('#auditError').hidden&&!!document.querySelector('#auditError button')`,'audit persistent search failure');
+    await evaluate(tab,`api=auditOriginalApi;document.querySelector('#auditQuery').value='';true`);
+    await clickAppointmentControl(tab,'#auditClear');await waitExpression(tab,ready,'audit restored');
+    const geometry=await evaluate(tab,`(()=>{const controls=[...document.querySelectorAll('#auditView button,#auditView input')].filter(e=>e.getClientRects().length);const root=document.querySelector('#auditView');root.scrollIntoView({block:'start'});return {overflow:document.documentElement.scrollWidth>innerWidth+2,small:controls.filter(e=>e.getBoundingClientRect().height<43).map(e=>e.id||e.textContent),outside:controls.filter(e=>e.getBoundingClientRect().left<0||e.getBoundingClientRect().right>innerWidth+2).map(e=>e.id||e.textContent)};})()`);
+    if(geometry.overflow||geometry.small.length||geometry.outside.length)throw Error('audit controls layout '+JSON.stringify(geometry));
+    const output=path.join(__dirname,'../output/audit-view-evidence');fs.mkdirSync(output,{recursive:true});
+    const screenshot=await tab.send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(output,`audit-${viewport.screenWidth}-${viewport.dpr}-${new URL(origin).hostname}.png`),Buffer.from(screenshot.data,'base64'));
+    console.log(`  PASS audit ${viewport.screenWidth}@${viewport.dpr} ${new URL(origin).hostname}: real search/4 shortcuts/HN chooser/50→55/keyboard detail retry/role/loading/race/escape/date/error/layout`);
   }
 }
 
@@ -647,6 +741,10 @@ async function runViewport({ edge, base, hostBase, cdpPort, viewport, checkHostD
       screenHeight: viewport.screenHeight,
     });
 
+    if (process.env.CLINIC_BROWSER_AUDIT_ONLY === '1') {
+      await verifyAuditView(page, [hostBase, base], viewport);
+      return;
+    }
     if (process.env.CLINIC_BROWSER_STOCK_ONLY === '1') {
       await require('./test-stock-warnings-browser')({tab:page,origins:[hostBase,base],viewport,evaluate,waitExpression,clickControl:clickAppointmentControl});
       return;
@@ -999,6 +1097,7 @@ async function runViewport({ edge, base, hostBase, cdpPort, viewport, checkHostD
     await require('./test-drug-labels-browser')({page,front,base,hostBase,receiptNo:medicationReceipt,viewport,first:checkHostDoctor,evaluate,waitExpression,clickControl:clickAppointmentControl,ApiSession});
     stage = 'admin: หมวด/บันทึกเฉพาะหน้า/ตอบกลับหาย/ลิงก์ตรง';
     await verifyAdminPages(front, [hostBase,base], viewport, cdpPort);
+    await verifyAuditView(front, [hostBase,base], viewport);
     stage = 'หมอหลายคน: profile แยก / นัดกลับหมอเดิม / ซ่อนเมื่อหมอคนเดียว';
     await require('./test-multi-doctor-browser')({client,page,admin:front,base,hostBase,viewport,evaluate,waitExpression});
     stage = 'ต้นทุนหัตถการ: เพิ่ม/แก้/คำตอบหาย/รายงาน';
@@ -1163,7 +1262,9 @@ db.close();`],{cwd:__dirname,env,encoding:'utf8',windowsHide:true});
         backupCloudDir,
       });
     }
-    if (process.env.CLINIC_BROWSER_STOCK_ONLY === '1') {
+    if (process.env.CLINIC_BROWSER_AUDIT_ONLY === '1') {
+      console.log(`\nAUDIT BROWSER PASS: ${VIEWPORTS.length}/${VIEWPORTS.length} viewports × 2 origins — targeted audit only, NOT the full browser gate`);
+    } else if (process.env.CLINIC_BROWSER_STOCK_ONLY === '1') {
       console.log(`STOCK WARNINGS BROWSER PASS: ${VIEWPORTS.length}/${VIEWPORTS.length} focused, NOT the full browser gate`);
     } else if (process.env.CLINIC_BROWSER_VITALS_ONLY === '1') {
       console.log(`VITALS BROWSER PASS: ${VIEWPORTS.length}/${VIEWPORTS.length} focused, NOT the full browser gate`);

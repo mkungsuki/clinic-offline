@@ -290,6 +290,27 @@ ALTER TABLE visits ADD COLUMN preferred_doctor_id INTEGER REFERENCES users(id);
   if (v < 16) db.exec('ALTER TABLE services ADD COLUMN cost REAL CHECK(cost IS NULL OR cost >= 0)');
   // Keep all legacy instructions unchanged; never infer a numeric dose from prose.
   if (v < 17) db.exec('ALTER TABLE drugs ADD COLUMN default_dose_json TEXT');
+  // v18 is additive: historical rows, tables and their immutable triggers stay untouched.
+  if (v < 18) {
+    db.exec(`CREATE TABLE audit_changes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at TEXT NOT NULL,
+      actor_id INTEGER REFERENCES users(id), actor_name TEXT, actor_role TEXT,
+      station TEXT NOT NULL CHECK(station IN ('host','lan','system')),
+      category TEXT NOT NULL CHECK(category IN ('patient','vitals','drug','service','lot','user','settings','stock')),
+      action TEXT NOT NULL CHECK(action IN ('create','update','merge','suspend','reactivate','secret_changed','permission','import')),
+      entity_id TEXT NOT NULL, ref TEXT NOT NULL,
+      changes_json TEXT NOT NULL CHECK(json_valid(changes_json)), reason TEXT,
+      source TEXT NOT NULL, important INTEGER NOT NULL CHECK(important IN (0,1))
+    );
+    CREATE INDEX audit_changes_category_time ON audit_changes(category,created_at,id);
+    CREATE INDEX audit_changes_ref ON audit_changes(ref,created_at,id);
+    CREATE INDEX audit_changes_entity ON audit_changes(category,entity_id,created_at,id);
+    CREATE INDEX audit_changes_actor ON audit_changes(actor_id,created_at,id);
+    CREATE TRIGGER audit_changes_no_update BEFORE UPDATE ON audit_changes BEGIN SELECT RAISE(ABORT,'audit_changes is append-only'); END;
+    CREATE TRIGGER audit_changes_no_delete BEFORE DELETE ON audit_changes BEGIN SELECT RAISE(ABORT,'audit_changes is append-only'); END;`);
+    db.prepare('INSERT INTO settings (key,value) VALUES (?,?)').run('audit_changes_since',now());
+  }
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 }
 

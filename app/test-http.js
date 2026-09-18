@@ -70,6 +70,7 @@ async function runIsolated({ idleLockMs, smokeEnv }) {
 }
 
 (async () => {
+  if(process.env.CLINIC_TEST_AUDIT_ONLY==='1'){await require('./test-audit-http')();return;}
   if(process.env.CLINIC_TEST_PASSWORD_ONLY==='1'){await require('./test-password-recovery-http')();return;}
   if(process.env.CLINIC_TEST_TRIAL_TOOLS_ONLY==='1'){await require('./test-trial-maintenance-http')();return;}
   if(process.env.CLINIC_TEST_DOSE_ONLY==='1'){await require('./test-dose-defaults-http')();return;}
@@ -83,6 +84,7 @@ async function runIsolated({ idleLockMs, smokeEnv }) {
   await require('./test-appointments-http')();
   await require('./test-coexistence-http')();
   await require('./test-auth-http')();
+  await require('./test-audit-http')();
   await require('./test-service-cost-http')();
   await require('./test-solo-doctor-http')();
   await require('./test-dose-defaults-http')();

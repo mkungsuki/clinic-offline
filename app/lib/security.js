@@ -5,6 +5,14 @@
 //  - Host/Origin allowlist ของ server หลัก กัน DNS rebinding / CSRF ข้ามเว็บจากเบราว์เซอร์เครื่องหมอ
 const os = require('node:os');
 const { db, now } = require('./db');
+const bootStartedAt = now();
+let writeFailuresSinceBoot = 0;
+function noteLogFailure(kind) {
+  writeFailuresSinceBoot++;
+  // SQLite messages may include values. This bounded code is all diagnostics need.
+  console.error('SECURITY_HISTORY_WRITE_FAILED',kind);
+}
+function logHealth() { return {write_failures_since_boot:writeFailuresSinceBoot,boot_started_at:bootStartedAt}; }
 
 // ---------- station ----------
 function isLoopbackAddress(value) {
@@ -111,7 +119,7 @@ function recordAuthEvent(event, { remoteAddress, username = null, userId = null 
   try {
     db.prepare(`INSERT INTO auth_events (event, username, user_id, station, remote, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
       .run(event, username ? String(username).slice(0, 64) : null, userId, stationOf(remoteAddress), normalizeRemote(remoteAddress), now());
-  } catch (e) { console.error('auth_events:', e.message); } // best-effort — ห้ามทำให้ login พัง
+  } catch { noteLogFailure('auth'); } // best-effort — ห้ามทำให้ login พัง
 }
 const ACCESS_ACTIONS = new Set(['view_patient', 'view_history', 'view_documents', 'export', 'print']);
 function recordAccess(action, { session, remoteAddress, ref }) {
@@ -119,7 +127,7 @@ function recordAccess(action, { session, remoteAddress, ref }) {
   try {
     db.prepare(`INSERT INTO access_log (user_id, role, station, action, ref, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
       .run(session.userId, session.role, stationOf(remoteAddress), action, String(ref || '').slice(0, 64), now());
-  } catch (e) { console.error('access_log:', e.message); }
+  } catch { noteLogFailure('access'); }
 }
 
 // สรุปสำหรับหน้า admin — ไม่มีรหัส/PIN/cookie
@@ -135,7 +143,7 @@ function authSummary({ hours = 24 } = {}) {
   const lastLogins = db.prepare(`SELECT a.username, a.station, a.remote, a.created_at, u.display_name
     FROM auth_events a LEFT JOIN users u ON u.id = a.user_id WHERE a.event = 'login_ok' ORDER BY a.id DESC LIMIT 10`).all();
   const worst = fails[0] ? fails[0].c : 0;
-  return { hours, since: sinceTs, totals, fails, lockouts, last_logins: lastLogins,
+  return { ...logHealth(), hours, since: sinceTs, totals, fails, lockouts, last_logins: lastLogins,
     level: worst >= 50 || lockouts.length ? 'bad' : worst >= 10 ? 'warn' : 'ok' };
 }
 function accessSearch({ ref = '', userId = null, dateFrom = '', dateTo = '', limit = 200 } = {}) {
@@ -189,7 +197,7 @@ function originAllowed(originHeader) {
 module.exports = {
   isLoopbackAddress, stationOf, normalizeRemote,
   precheck, noteFailure, noteSuccess, resetLimiter,
-  recordAuthEvent, recordAccess, authSummary, accessSearch,
+  recordAuthEvent, recordAccess, authSummary, accessSearch, logHealth,
   hostAllowed, originAllowed, allowedHostnames,
   LIMITS: { WINDOW_MS, BLOCK_MS, MAX_FAILS, BACKOFF_AFTER, BACKOFF_CAP_MS },
 };

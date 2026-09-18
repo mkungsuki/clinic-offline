@@ -78,7 +78,7 @@ try {
     const legacy=path.join(temp,'legacy'); fs.mkdirSync(legacy);
     const file=path.join(legacy,'clinic.db'); db.prepare('VACUUM INTO ?').run(file);
     const {DatabaseSync}=require('node:sqlite'); const copy=new DatabaseSync(file);
-    copy.exec('ALTER TABLE drugs DROP COLUMN default_dose_json; ALTER TABLE services DROP COLUMN cost; DROP TABLE appointment_events; ALTER TABLE appointments DROP COLUMN doctor_id; ALTER TABLE visits DROP COLUMN preferred_doctor_id; PRAGMA user_version=13');
+    copy.exec("DROP TABLE audit_changes; DELETE FROM settings WHERE key='audit_changes_since'; ALTER TABLE drugs DROP COLUMN default_dose_json; ALTER TABLE services DROP COLUMN cost; DROP TABLE appointment_events; ALTER TABLE appointments DROP COLUMN doctor_id; ALTER TABLE visits DROP COLUMN preferred_doctor_id; PRAGMA user_version=13");
     const count=copy.prepare('SELECT COUNT(*) n FROM appointments').get().n; copy.close();
     const run=spawnSync(process.execPath,['--no-warnings','-e',`const {db}=require('./lib/db'); console.log(JSON.stringify({count:db.prepare('SELECT COUNT(*) n FROM appointments').get().n,events:db.prepare('SELECT COUNT(*) n FROM appointment_events').get().n,version:db.prepare('PRAGMA user_version').get().user_version}));db.close()`],{cwd:__dirname,env:{...process.env,CLINIC_DATA_DIR:legacy},encoding:'utf8',windowsHide:true});
     assert.equal(run.status,0,run.stderr); const out=JSON.parse(run.stdout.trim());

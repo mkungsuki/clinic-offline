@@ -515,6 +515,7 @@ try {
   // ถอย schema ทีละขั้นจากรุ่นล่าสุด — เพิ่ม migration ใหม่ต้องเพิ่มขั้นตอนถอยที่นี่คู่กันเสมอ
   // (ย้อนเฉพาะ "สิ่งที่รุ่นนั้นเพิ่ม" ไม่ใช่ลบทั้งฐาน เพื่อให้ migrate ขาขึ้นเจอสภาพจริงของเครื่องเก่า)
   const DOWNGRADE_STEPS = {
+    18: `DROP TABLE audit_changes; DELETE FROM settings WHERE key='audit_changes_since';`,
     17: `ALTER TABLE drugs DROP COLUMN default_dose_json;`,
     16: `ALTER TABLE services DROP COLUMN cost;`,
     15: `ALTER TABLE appointments DROP COLUMN doctor_id; ALTER TABLE visits DROP COLUMN preferred_doctor_id;`,
@@ -542,7 +543,7 @@ try {
     assert.equal(userVersion(dir), target);
   }
 
-  for (const from of [16, 15, 14, 13, 9, 8]) {
+  for (const from of [17, 16, 15, 14, 13, 9, 8]) {
     test(`migration สังเคราะห์ ${from}→${SCHEMA_VERSION} ผ่าน, ซ้ำแล้ว idempotent, และ migrate-and-verify ตรวจ/ปฏิเสธถูก`, () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), `clinic-migrate-${from}to${SCHEMA_VERSION}-`));
       try {

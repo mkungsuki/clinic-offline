@@ -4,12 +4,12 @@
 // โดยไม่ trigger migration กับฐานข้อมูลจริง
 //
 // กติกาเมื่อเพิ่ม migration ใน lib/db.js: บวกเลขนี้ขึ้น 1 และเพิ่มขั้นตอนใน migrateSteps() คู่กันเสมอ
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 18;
 
 // วัตถุ schema ที่ต้องมีเมื่ออยู่ที่ SCHEMA_VERSION — ใช้ตรวจหลัง migrate ว่าไม่ได้ข้ามขั้น
 // (ตาราง append-only ของ v9/v10/v11, client_ops ของ v12, drug_lots ของ v13 และคอลัมน์ที่เพิ่มใน v9/v13)
 const SCHEMA_MARKERS = {
-  tables: ['receipt_document_snapshots', 'med_cert_events', 'document_print_events', 'auth_events', 'access_log', 'client_ops', 'drug_lots', 'appointment_events'],
+  tables: ['receipt_document_snapshots', 'med_cert_events', 'document_print_events', 'auth_events', 'access_log', 'client_ops', 'drug_lots', 'appointment_events', 'audit_changes'],
   columns: [['users', 'display_name_en'], ['receipt_lines', 'item_code'], ['med_certs', 'template_key'], ['drugs', 'expiry_warn_days'], ['appointments', 'doctor_id'], ['visits', 'preferred_doctor_id'], ['services', 'cost'], ['drugs', 'default_dose_json']],
 };
 

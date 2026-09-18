@@ -8,6 +8,7 @@ const crypto = require('node:crypto');
 const { db, now, today, getSetting, setSetting, BACKUP_DIR, ATTACH_DIR, ASSET_DIR, DATA_DIR } = require('./db');
 const KEY_FILE = path.join(DATA_DIR, 'cloud-backup.key');
 const passwordRecovery = require('./password-recovery');
+const audit = require('./audit');
 const WAIT_BUFFER = new Int32Array(new SharedArrayBuffer(4));
 
 function sha256(file) {
@@ -194,7 +195,10 @@ function copySnapshot(target, localFile, manifestFile) {
 
 function syncAttachments(dstDir) { return syncFiles(ATTACH_DIR, dstDir); }
 
-function runBackup() {
+function runBackup({ source, actorId } = {}) {
+  const requested = ['manual','scheduled','system'].includes(source) ? source : null;
+  const who = audit.actor(actorId,requested);
+  const origin = requested || (who.actor_id ? 'manual' : 'system');
   const startedAt = now();
   const { localFile, manifestFile } = allocateBackupPaths(startedAt);
   const targets = [];
@@ -243,7 +247,7 @@ function runBackup() {
   }
   const required = targets.filter(t => t.kind !== 'maintenance');
   const ok = localOk && required.every(t => t.ok);
-  const detail = JSON.stringify({ format: 2, targets });
+  const detail = JSON.stringify({ format: 3, targets, source:origin, ...who });
   db.prepare('INSERT INTO backup_log (started_at, finished_at, ok, detail) VALUES (?, ?, ?, ?)')
     .run(startedAt, now(), ok ? 1 : 0, detail);
   return { ok: ok ? 1 : 0, detail, targets };
@@ -288,10 +292,10 @@ function schedule() {
       const at = getSetting('backup_time', '21:00');
       if (now().slice(11, 16) >= at) {
         const doneToday = db.prepare('SELECT 1 FROM backup_log WHERE ok = 1 AND started_at >= ?').get(`${today()} 00:00:00`);
-        if (!doneToday) runBackup();
+        if (!doneToday) runBackup({source:'scheduled'});
       }
     } catch (e) { console.error('backup schedule error:', e.message); }
   }, 10 * 60 * 1000).unref();
 }
 
-module.exports = { runBackup, status, schedule, ensureRecoveryKeyFile, markRecoveryKeyExported, decryptHash };
+module.exports = { runBackup, status, schedule, ensureRecoveryKeyFile, markRecoveryKeyExported, decryptHash, parseDetail };

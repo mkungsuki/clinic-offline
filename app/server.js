@@ -32,6 +32,8 @@ const doctors = require('./lib/doctors');
 const printEvents = require('./lib/print-events');
 const { UpdateService, entitlementAllowsUpdate } = require('./lib/update-service');
 const security = require('./lib/security');
+const audit = require('./lib/audit');
+const auditQuery = require('./lib/audit-query');
 const lanStatus = require('./lib/lan-status');
 
 const PORT = Number(process.env.CLINIC_PORT || getSetting('port', '8080'));
@@ -264,6 +266,15 @@ route('GET', '/api/admin/access-log', ctx => {
   requireRole(ctx, 'admin');
   send(ctx.res, 200, security.accessSearch({ ref: ctx.query.ref, userId: ctx.query.user_id, dateFrom: ctx.query.from, dateTo: ctx.query.to, limit: ctx.query.limit }));
 });
+route('GET', '/api/admin/audit', ctx => {
+  requireRole(ctx, 'admin');
+  send(ctx.res, 200, auditQuery.search(ctx.query));
+});
+route('GET', '/api/admin/audit-detail', ctx => {
+  requireRole(ctx, 'admin');
+  const row = auditQuery.detail(ctx.query.key);
+  send(ctx.res, row ? 200 : 404, row || { error: 'ไม่พบประวัติรายการนี้' });
+});
 
 // ==================== เครื่องห้องตรวจ (คอมเครื่องที่สอง) — การ์ดใน Admin ====================
 // สถานะอ่านได้ทุกที่ที่เป็น admin; การกระทำ (เรียกตัวช่วย/เปิดโฟลเดอร์) ทำได้เฉพาะ admin บนเครื่องหน้าร้าน (loopback)
@@ -442,6 +453,13 @@ function exactlyOnce(ctx, kind, { status = 201, scope, conflictField, conflictMe
   send(ctx.res, status, result);
 }
 
+// Test-only power loss after a committed edit, before the browser sees its result.
+// A normal request, or one without the isolated harness token, cannot activate this.
+function crashAfterAuditCommit(ctx) {
+  if (TEST_INSTANCE_TOKEN && ctx.req.headers['x-clinic-test-token'] === TEST_INSTANCE_TOKEN &&
+      ctx.req.headers['x-clinic-test-crash'] === 'after-commit') process.exit(1);
+}
+
 // ลงทะเบียน (exactly-once — codex NO-GO 2026-08-24): queue=true = สร้าง visit ใน txn เดียวกัน
 // (เดิมแยก POST /api/patients + /api/visits สองรายการ — ตายกลางทางแล้วได้คนไข้ไม่มีคิว หรือกดซ้ำแล้ว HN เบิ้ล)
 route('POST', '/api/patients', ctx => {
@@ -461,6 +479,7 @@ route('POST', '/api/patients', ctx => {
 route('PATCH', '/api/patients/:hn', ctx => {
   requireRole(ctx, 'front', 'doctor');
   patients.update(ctx.params.hn, ctx.body, ctx.session.userId);
+  crashAfterAuditCommit(ctx);
   send(ctx.res, 200, { ok: true });
 });
 route('GET', '/api/patients/:hn/history', ctx => {
@@ -557,6 +576,7 @@ route('POST', '/api/visits/:id/cancel', ctx => {
 route('PATCH', '/api/visits/:id/vitals', ctx => {
   requireRole(ctx, 'front', 'doctor');
   visits.updateVitals(Number(ctx.params.id), ctx.body, ctx.session.userId);
+  crashAfterAuditCommit(ctx);
   send(ctx.res, 200, { ok: true });
 });
 
@@ -732,7 +752,7 @@ route('POST', '/api/stock/expiry-warning', ctx => {
   if (!Number.isInteger(days) || days < 1 || days > 3650) {
     throw Object.assign(new Error('จำนวนวันเตือนล่วงหน้าต้องเป็นตัวเลข 1–3650 วัน'), { status: 400 });
   }
-  setSetting('stock_expiry_warn_days', String(days));
+  saveAuditedSettings({ stock_expiry_warn_days: String(days) });
   send(ctx.res, 200, { ok: true, days });
 });
 route('POST', '/api/drugs/:id/adjust', ctx => {
@@ -767,6 +787,7 @@ route('POST', '/api/drugs/import-csv', ctx => {
   const errors = [];
   const { txn } = require('./lib/db');
   txn(() => {
+    audit.withoutRecording(() => {
     for (const [i, line] of linesArr.entries()) {
       const [name, unit, price, qty, reorder, cost] = line.split(',').map(s => (s || '').trim());
       if (!name || name === 'name' || name === 'ชื่อยา') continue;
@@ -777,6 +798,9 @@ route('POST', '/api/drugs/import-csv', ctx => {
         added++;
       } catch (e) { errors.push(`บรรทัด ${i + 1}: ${e.message}`); }
     }
+    });
+    audit.record({ category: 'stock', action: 'import', entityId: 'csv', ref: 'นำเข้ายาจาก CSV',
+      after: { added_count: added, failed_count: errors.length } });
   });
   send(ctx.res, 200, { added, errors });
 });
@@ -829,11 +853,11 @@ route('GET', '/api/appointment-operations/:id', ctx => {
   send(ctx.res, 200, result && result.actor_id === ctx.session.userId ? { known: true, result } : { known: false });
 });
 route('GET', '/api/appointments/followup', ctx => {
-  security.recordAccess('view_appointment_followup', { session: ctx.session, remoteAddress: ctx.req.socket.remoteAddress });
   send(ctx.res, 200, appts.followup(ctx.query.days || 30));
 });
 route('GET', '/api/appointments/:id/history', ctx => {
-  security.recordAccess('view_appointment_history', { session: ctx.session, remoteAddress: ctx.req.socket.remoteAddress, ref: String(ctx.params.id) });
+  const appointment = appts.detail(Number(ctx.params.id));
+  security.recordAccess('view_history', { session: ctx.session, remoteAddress: ctx.req.socket.remoteAddress, ref: appointment.hn });
   send(ctx.res, 200, appts.history(Number(ctx.params.id)));
 });
 route('POST', '/api/appointments/:id/attendance', ctx => appointmentWrite(ctx, 'attendance', () => appts.attendance(Number(ctx.params.id), ctx.body, ctx.session.userId), 200, true));
@@ -953,7 +977,7 @@ route('POST', '/api/backup/run', ctx => {
   // ทุกบทบาทที่ใช้งานระบบเห็นสถานะ backup และต้องกดช่วยกู้สถานการณ์ได้
   // (admin ใช้จากหน้าตั้งค่า, doctor/front ใช้จากหน้ารายงาน)
   requireRole(ctx, 'admin', 'doctor', 'front');
-  send(ctx.res, 200, backup.runBackup());
+  send(ctx.res, 200, backup.runBackup({ source: 'manual', actorId: ctx.session.userId }));
 });
 route('GET', '/api/backup/recovery-key', ctx => {
   requireRole(ctx);
@@ -988,7 +1012,7 @@ route('POST', '/api/recovery/password', async ctx => {
   security.noteSuccess('unlock', remote, subject);
   const saved = await recoveryService.setPassword(ctx.body);
   if (TEST_INSTANCE_TOKEN && ctx.req.headers['x-clinic-test-token'] === TEST_INSTANCE_TOKEN && ctx.req.headers['x-clinic-test-crash'] === 'after-password-save') process.exit(88);
-  const result = backup.runBackup();
+  const result = backup.runBackup({ source: 'manual', actorId: ctx.session.userId });
   send(ctx.res, 200, { ok: true, password: saved, backup: result, health: recoveryService.health() });
 });
 route('POST', '/api/recovery/drill', async ctx => {
@@ -1036,6 +1060,17 @@ const SETTING_KEYS = [...Object.keys(medicationSheet.SETTINGS), ...Object.keys(d
   'receipt_show_doctor', 'appt_slip_show_doctor', 'appt_slip_show_note', 'appt_slip_footer',
   'default_service_name',
   'backup_dest_1', 'backup_dest_2', 'backup_cloud_dest', 'backup_time', 'auto_print'];
+function saveAuditedSettings(input) {
+  return txn(() => {
+    const before = {}, after = {};
+    for (const k of SETTING_KEYS) if (Object.hasOwn(input, k)) {
+      before[k] = getSetting(k, '');
+      setSetting(k, input[k]);
+      after[k] = getSetting(k, '');
+    }
+    audit.record({ category: 'settings', entityId: 'clinic', ref: 'การตั้งค่าคลินิก', before, after });
+  });
+}
 route('GET', '/api/settings', ctx => {
   const out = {};
   // stock_expiry_warn_days: หน้า stock (front/doctor) ต้องอ่านได้เพื่อโชว์/แก้เกณฑ์เตือน — ไม่ใช่ข้อมูลลับ
@@ -1053,7 +1088,8 @@ route('POST', '/api/settings', ctx => {
     if (digits && digits.length !== 13) throw Object.assign(new Error('เลขประจำตัวผู้เสียภาษีต้องมี 13 หลัก'), { status: 400 });
     ctx.body.receipt_tax_id = digits;
   }
-  for (const k of SETTING_KEYS) if (k in ctx.body) setSetting(k, ctx.body[k]);
+  saveAuditedSettings(ctx.body);
+  crashAfterAuditCommit(ctx);
   send(ctx.res, 200, { ok: true });
 });
 route('POST', '/api/settings/logo', ctx => {
@@ -1065,7 +1101,7 @@ route('POST', '/api/settings/logo', ctx => {
   const ext = mime === 'image/png' ? '.png' : '.jpg';
   const name = `clinic-logo-${crypto.createHash('sha256').update(buf).digest('hex').slice(0, 16)}${ext}`;
   fs.writeFileSync(path.join(ASSET_DIR, name), buf);
-  setSetting('clinic_logo_file', name);
+  saveAuditedSettings({ clinic_logo_file: name });
   send(ctx.res, 200, { ok: true, file: name });
 });
 
@@ -1170,7 +1206,7 @@ const handleRequest = async (req, res) => {
     if (session && !session.locked && req.method !== 'GET' && urlPath !== '/api/logout') auth.touchSession(session.sid);
 
     const ctx = { req, res, params: m.params, query: Object.fromEntries(u.searchParams), body, session };
-    await m.handler(ctx);
+    await audit.run({ session, remoteAddress: req.socket.remoteAddress }, () => m.handler(ctx));
   } catch (e) {
     const status = e.status || (String(e.message).includes('UNIQUE') ? 409 : 500);
     if (status === 500) console.error(e);

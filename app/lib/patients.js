@@ -1,5 +1,6 @@
 'use strict';
 const { db, txn, now, nextHN } = require('./db');
+const audit = require('./audit');
 
 function normPhone(p) { return String(p || '').replace(/[^0-9]/g, ''); }
 function escLike(s) { return String(s).replace(/[%_\\]/g, c => '\\' + c); }
@@ -25,6 +26,9 @@ function register(data, userId) {
 }
 
 function update(hn, data, userId) {
+  return txn(() => {
+  const before = db.prepare('SELECT * FROM patients WHERE hn=?').get(hn);
+  if (!before) throw Object.assign(new Error('ไม่พบคนไข้'), {status:404});
   const fields = ['prefix', 'first_name', 'last_name', 'sex', 'birth_date', 'citizen_id', 'phone', 'address', 'chronic', 'emergency_name', 'emergency_phone'];
   const sets = [], vals = [];
   for (const f of fields) if (f in data) { sets.push(`${f} = ?`); vals.push(data[f] === '' ? null : data[f]); }
@@ -33,6 +37,8 @@ function update(hn, data, userId) {
   sets.push('updated_at = ?', 'updated_by = ?');
   vals.push(now(), userId, hn);
   db.prepare(`UPDATE patients SET ${sets.join(', ')} WHERE hn = ?`).run(...vals);
+  audit.record({category:'patient',entityId:hn,ref:hn,before,after:db.prepare('SELECT * FROM patients WHERE hn=?').get(hn),actorId:userId});
+  });
 }
 
 // ค้นหา: ชื่อบางส่วน/เบอร์/HN/ปชช. — LIKE scan เร็วพอที่หลักหมื่น row (plan A4)
@@ -81,12 +87,17 @@ function removeAllergy(hn, refId, reason, userId) {
 }
 
 function markDuplicate(hn, primaryHn, userId) {
+  return txn(() => {
+  const before = db.prepare('SELECT * FROM patients WHERE hn=?').get(hn);
+  if (!before) throw Object.assign(new Error('ไม่พบคนไข้'), {status:404});
   if (hn === primaryHn) throw Object.assign(new Error('HN ซ้ำกับตัวเอง'), { status: 400 });
   const primary = db.prepare('SELECT hn, duplicate_of_hn FROM patients WHERE hn = ?').get(primaryHn);
   if (!primary) throw Object.assign(new Error('ไม่พบ HN หลัก'), { status: 404 });
   if (primary.duplicate_of_hn) throw Object.assign(new Error('HN หลักเป็นตัวซ้ำเสียเอง'), { status: 400 });
   db.prepare('UPDATE patients SET duplicate_of_hn = ?, updated_at = ?, updated_by = ? WHERE hn = ?')
     .run(primaryHn, now(), userId, hn);
+  audit.record({category:'patient',action:'merge',entityId:hn,ref:hn,before,after:{duplicate_of_hn:primaryHn},actorId:userId});
+  });
 }
 
 // ---------- เตือนแพ้ยาตอนสั่ง (S1) ----------

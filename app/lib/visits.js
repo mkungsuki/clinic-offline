@@ -115,6 +115,7 @@ function finishExam(visitId, { note, lines, baseVersionId, allergyAck } = {}, us
 }
 
 function updateVitals(visitId, vitals, userId) {
+  return txn(() => {
   const v = get(visitId);
   if (!v) throw err('ไม่พบ visit', 404);
   if (['COMPLETED', 'CANCELLED'].includes(v.state)) throw err('visit ปิดแล้ว แก้ vitals ไม่ได้', 409);
@@ -123,6 +124,8 @@ function updateVitals(visitId, vitals, userId) {
     .run(vitals.weight_kg || null, vitals.height_cm || null, vitals.temp_c || null,
       vitals.bp_sys || null, vitals.bp_dia || null, vitals.pulse || null, vitals.glucose || null,
       userId, now(), visitId);
+  require('./audit').record({category:'vitals',entityId:visitId,ref:v.hn,before:v,after:get(visitId),actorId:userId});
+  });
 }
 
 // คิววันนี้เท่านั้น — visit ค้างข้ามวันไม่ปน (plan finding 15); คืนคิวแล้วไปท้ายแถว

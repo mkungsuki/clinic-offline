@@ -1,0 +1,57 @@
+/* Use the clinic's existing theme tokens; keep primary facts fully readable. */
+#auditView { font-size: 16px; line-height: 1.6; color: var(--ink); }
+#auditView .audit-intro { margin-top: 0; }
+#auditView .btn, #auditView summary, #auditView input { min-height: 44px; }
+#auditView .btn { white-space: normal; overflow-wrap: anywhere; }
+#auditView :is(button, input, summary, a):focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+.audit-search { display: grid; gap: 12px; }
+.audit-search input[type="search"] { width: 100%; font-size: 16px; }
+.audit-search .f > span { font-size: 16px; color: var(--ink2); }
+.audit-actions, .audit-buttons, .audit-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.audit-period { border: 0; padding: 0; margin: 0; min-width: 0; }
+.audit-period legend, .audit-quick > span { font-weight: 700; margin-bottom: 8px; }
+.audit-date-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; align-items: end; }
+.audit-date-fields input { min-width: 0; width: 100%; }
+.audit-date-fields > button { grid-column: 1 / -1; justify-self: start; }
+.audit-quick { margin-top: 18px; }
+.audit-quick > span { display: block; }
+.audit-tabs { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+#auditView button[aria-pressed="true"] { background: var(--blue); color: #fff; border-color: var(--blue); font-weight: 700; }
+#auditStatus { min-height: 26px; color: var(--ink2); }
+#auditStatus, #auditError, .audit-row { scroll-margin-top: calc(var(--topbar-h, 60px) + 16px); }
+.audit-notice { padding: 14px; margin: 14px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface2); overflow-wrap: anywhere; }
+.audit-notice > :first-child { margin-top: 0; }
+.audit-notice > :last-child { margin-bottom: 0; }
+.audit-error { border-width: 2px; border-color: var(--red); }
+.audit-group { margin-top: 20px; padding-top: 16px; border-top: 2px solid var(--line); }
+.audit-group-heading { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; }
+.audit-group-heading h3 { margin: 0 0 10px; font-size: 19px; }
+.audit-group > .btn { margin-top: 10px; }
+.audit-row { border: 1px solid var(--line); border-radius: 10px; margin: 8px 0; overflow-wrap: anywhere; background: var(--card); }
+.audit-row > summary { position: relative; padding: 12px 14px; cursor: pointer; list-style-position: inside; }
+.audit-row > summary::marker { color: var(--ink); }
+.audit-row-head { display: inline; }
+.audit-sentence { font-weight: 700; font-size: 17px; }
+.audit-row-meta, .audit-reference { display: block; color: var(--ink2); margin-top: 5px; }
+.audit-row-meta { font-size: 15px; }
+.audit-open-hint { display: block; font-size: 15px; margin-top: 7px; text-decoration: underline; color: var(--ink); }
+.audit-row[open] { border-color: var(--blue); }
+.audit-row[open] > summary { border-bottom: 1px solid var(--line); }
+.audit-outcome { display: block; font-weight: 700; }
+.audit-detail { padding: 14px; }
+.audit-detail h4 { font-size: 18px; margin: 0 0 12px; }
+.audit-facts { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 8px 12px; margin: 12px 0; }
+.audit-facts dt { color: var(--ink2); font-weight: 600; }
+.audit-facts dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.audit-change { padding: 12px; background: var(--surface2); border-radius: 8px; margin: 10px 0; }
+.audit-change h5 { font-size: 16px; margin: 0; }
+.audit-change .audit-facts { grid-template-columns: 48px minmax(0, 1fr); margin-bottom: 0; }
+.audit-footer { border-top: 2px solid var(--line); margin-top: 22px; padding-top: 12px; }
+.audit-routine { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 0; min-height: 44px; cursor: pointer; }
+.audit-routine input { width: 22px; min-width: 22px; accent-color: var(--blue); }
+.audit-footer p { color: var(--ink2); }
+@media (max-width: 620px) {
+  .audit-facts { grid-template-columns: 80px minmax(0, 1fr); }
+  .audit-date-fields { grid-template-columns: minmax(0, 1fr); }
+  .audit-tabs .btn { flex: 1 1 135px; }
+}

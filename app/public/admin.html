@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ตั้งค่า</title>
 <link rel="stylesheet" href="/app.css">
+<link rel="stylesheet" href="/audit-view.css">
 <style>
   .admin-shell { max-width: 1200px; margin: 16px auto; padding: 0 16px; }
   .admin-layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 20px; align-items: start; }
@@ -60,6 +61,33 @@
     </main>
   </div>
   <div id="adminSource">
+  <div class="card" id="auditView" data-admin-section="audit">
+    <p class="audit-intro">ค้นว่าใครทำอะไร เมื่อไร แล้วกดรายการเพื่อดูรายละเอียด</p>
+    <form id="auditSearchForm" class="audit-search" role="search">
+      <label class="f" for="auditQuery"><span>พิมพ์ HN ชื่อคนไข้ ชื่อยา เลขใบเสร็จ หรือชื่อผู้ใช้</span><input id="auditQuery" type="search" autocomplete="off" maxlength="120" placeholder="ค้นจากชื่อหรือเลขที่ท่านรู้"></label>
+      <div class="audit-actions"><button class="btn primary" type="submit">ค้นหา</button><button class="btn" type="button" id="auditClear">ล้างการค้นหา</button></div>
+      <fieldset class="audit-period"><legend>ช่วงเวลา</legend><div class="audit-buttons" id="auditPeriods">
+        <button class="btn" type="button" data-audit-period="today">วันนี้</button><button class="btn" type="button" data-audit-period="7" aria-pressed="true">7 วัน</button><button class="btn" type="button" data-audit-period="30">30 วัน</button><button class="btn" type="button" data-audit-period="custom">เลือกวัน</button>
+      </div><div id="auditCustomDates" class="audit-date-fields" hidden><label class="f">ตั้งแต่วันที่<input id="auditFrom" type="date"></label><label class="f">ถึงวันที่<input id="auditTo" type="date"></label><button class="btn" type="submit">ใช้ช่วงวันนี้</button></div></fieldset>
+    </form>
+    <div class="audit-quick" aria-label="คำถามที่ใช้บ่อย"><span>คำถามที่ใช้บ่อย</span><div class="audit-buttons">
+      <button class="btn" type="button" data-audit-quick="adjust">ใครปรับยอดยา</button><button class="btn" type="button" data-audit-quick="price">ใครแก้ราคา/ทุน</button><button class="btn" type="button" data-audit-quick="void">บิลที่ยกเลิก/คืนเงิน</button><button class="btn" type="button" data-audit-quick="patient">ใครแก้ข้อมูลคนไข้</button>
+    </div></div>
+    <div class="audit-tabs" id="auditCategories" role="group" aria-label="หมวดประวัติ">
+      <button class="btn" type="button" data-audit-category="all" aria-pressed="true">ทุกหมวด — รายการสำคัญ</button><button class="btn" type="button" data-audit-category="patient">คนไข้</button><button class="btn" type="button" data-audit-category="stock">ยาและสต็อก</button><button class="btn" type="button" data-audit-category="money">เงิน</button><button class="btn" type="button" data-audit-category="document">เอกสาร</button><button class="btn" type="button" data-audit-category="account">บัญชีผู้ใช้</button><button class="btn" type="button" data-audit-category="backup">สำรองข้อมูล</button>
+    </div>
+    <p id="auditStatus" role="status" aria-live="polite" tabindex="-1"></p>
+    <div id="auditError" class="audit-notice audit-error" role="alert" tabindex="-1" hidden></div>
+    <div id="auditCandidates" class="audit-notice" hidden></div>
+    <div id="auditLogHealth" class="audit-notice audit-error" role="status" hidden></div>
+    <section id="auditAccountSummary" class="audit-notice" hidden><h3>การเข้าใช้ระบบใน 24 ชั่วโมง</h3><p id="authHeadline">กำลังตรวจ…</p><div id="authSummary" style="white-space:pre-line"></div></section>
+    <div id="auditRestore" class="audit-notice" hidden></div>
+    <div id="auditResults" aria-busy="false"></div>
+    <div class="audit-footer"><p id="auditCounts"></p><button class="btn" type="button" id="auditMore" hidden>แสดงเพิ่ม</button>
+      <label class="audit-routine"><input type="checkbox" id="auditIncludeRoutine">แสดงรายการปกติด้วย <span id="auditHiddenCount"></span></label>
+      <p id="auditSince"></p><p>หากกู้ข้อมูล ประวัติในหน้านี้จะย้อนตามสำเนาที่กู้ ช่วงที่ไม่มีในสำเนาจะไม่ถูกสร้างย้อนหลัง</p>
+    </div>
+  </div>
   <div class="card" data-admin-section="printing"><div class="stack"></div></div>
   <div class="card" data-admin-section="advanced"><h2>นำเข้า / ส่งออกการตั้งค่า</h2><div class="stack" id="profileTools"></div></div>
   <div class="stack">
@@ -270,23 +298,9 @@
       </div>
     </div>
     <div class="card" id="accessCard" data-admin-section="advanced">
-      <h2>การเข้าใช้ระบบ (24 ชม.)</h2>
-      <div class="stack">
-        <div id="authHeadline" style="font-size:1.15rem;font-weight:700">กำลังตรวจ…</div>
-        <div id="authSummary" class="muted" style="white-space:pre-line"></div>
-        <details>
-          <summary>ใครเปิดดูข้อมูลคนไข้ (ค้นย้อนหลัง)</summary>
-          <div class="stack mt">
-            <div class="row">
-              <label class="f"><span>HN</span><input type="text" id="acc_ref" placeholder="เช่น 69-0012" style="width:140px"></label>
-              <label class="f"><span>ตั้งแต่วันที่</span><input type="date" id="acc_from"></label>
-              <label class="f"><span>ถึงวันที่</span><input type="date" id="acc_to"></label>
-              <button class="btn" onclick="searchAccessLog()">ค้นหา</button>
-            </div>
-            <div id="accessResult" class="muted"></div>
-          </div>
-        </details>
-      </div>
+      <h2>การเข้าใช้ระบบ</h2>
+      <p>ดูการเข้าสู่ระบบและการเปิดข้อมูลคนไข้ได้ในหมวดบัญชีผู้ใช้</p>
+      <a class="btn" href="/admin.html?section=audit&amp;category=account">เปิดประวัติการเข้าใช้ระบบ</a>
     </div>
     <div class="card" data-admin-section="advanced">
       <h2>รวมคนไข้ซ้ำ</h2>
@@ -361,6 +375,7 @@
 </section>
 <script src="/common.js"></script>
 <script src="/admin-navigation.js"></script>
+<script src="/audit-view.js"></script>
 <script>
 'use strict';
 const SKEYS = ['drug_label_enabled','drug_label_layout','drug_label_width','drug_label_height','medication_sheet_enabled', 'medication_sheet_paper', 'medication_sheet_font', 'clinic_name', 'clinic_address', 'clinic_phone', 'clinic_license', 'clinic_name_en', 'clinic_address_en',
@@ -401,7 +416,6 @@ async function load() {
   api('GET', '/api/recovery/health').then(h => { recoveryHealth = h; renderRecoveryHealth(h); }).catch(() => {
     document.getElementById('adminHealthText').textContent = 'ยังตรวจสถานะสำรองไม่ได้ กรุณาเปิดหน้าสำรองข้อมูลเพื่อตรวจอีกครั้ง';
   });
-  if (adminSection === 'advanced') loadAuthSummary();
   if (adminSection === 'connections') loadLanStatus();
   document.getElementById('userTable').innerHTML =
     `<tr><th>ชื่อเข้าสู่ระบบ</th><th>ชื่อ</th><th>บทบาท</th><th>จัดการ</th></tr>` +
@@ -414,8 +428,7 @@ async function load() {
           <button class="btn sm ${u.active ? 'ghost-red' : 'green'}" onclick="toggleUser(${u.id}, ${u.active ? 0 : 1})">${u.active ? 'ระงับการใช้งาน' : 'เปิดใช้งาน'}</button></td></tr>`).join('');
   rememberAdminFields();
 }
-// security round 1: สรุปการเข้าใช้จาก auth_events (ไม่มีรหัส/PIN) + ค้น access_log
-const ACTION_TH = { view_patient: 'เปิดข้อมูลคนไข้', view_history: 'เปิดประวัติการรักษา', view_documents: 'เปิดรายการเอกสาร', export: 'ส่งออกข้อมูล', print: 'สั่งพิมพ์' };
+// สรุปการเข้าใช้เดิม แสดงคู่กับประวัติในหมวดบัญชีผู้ใช้
 const STATION_TH = { host: 'เครื่องหน้าร้าน', lan: 'เครื่องห้องตรวจ/เครื่องอื่น' };
 async function loadAuthSummary() {
   try {
@@ -431,22 +444,6 @@ async function loadAuthSummary() {
     for (const l of (s.last_logins || []).slice(0, 3)) lines.push(`• เข้าล่าสุด: ${esc(l.display_name || l.username || '')} ${thDate(l.created_at)} จาก${STATION_TH[l.station] || l.station}`);
     document.getElementById('authSummary').textContent = lines.join('\n');
   } catch (e) { document.getElementById('authHeadline').textContent = 'ตรวจไม่ได้: ' + e.message; }
-}
-async function searchAccessLog() {
-  const q = new URLSearchParams();
-  const ref = document.getElementById('acc_ref').value.trim(); if (ref) q.set('ref', ref);
-  const from = document.getElementById('acc_from').value; if (from) q.set('from', from);
-  const to = document.getElementById('acc_to').value; if (to) q.set('to', to);
-  const out = document.getElementById('accessResult');
-  out.textContent = 'กำลังค้น…';
-  try {
-    const rows = await api('GET', `/api/admin/access-log?${q}`);
-    if (!rows.length) { out.textContent = 'ไม่พบรายการ'; return; }
-    out.innerHTML = `<table class="t"><tr><th>เวลา</th><th>ใคร</th><th>ทำอะไร</th><th>กับ</th><th>จากเครื่อง</th></tr>` +
-      rows.map(r => `<tr><td>${thDate(r.created_at)}</td><td>${esc(r.display_name || ('#' + r.user_id))} (${{ doctor: 'แพทย์', front: 'หน้าคลินิก', admin: 'ผู้ดูแล' }[r.role] || r.role})</td>
-        <td>${ACTION_TH[r.action] || esc(r.action)}</td><td>${esc(r.ref)}</td><td>${STATION_TH[r.station] || r.station}</td></tr>`).join('') + '</table>' +
-      (rows.length >= 200 ? '<div class="muted">แสดง 200 รายการล่าสุด — ระบุ HN หรือช่วงวันให้แคบลง</div>' : '');
-  } catch (e) { out.textContent = e.message; }
 }
 // ---------- เครื่องห้องตรวจ (คอมเครื่องที่สอง) ----------
 // การ์ดนี้ตอบ 2 คำถามของผู้ใช้: "ตอนนี้ถึงขั้นไหนแล้ว" และ "ทำไมเครื่องหมอเข้าไม่ได้" — ภาษาคน ไม่มีศัพท์ช่างนอก <details>
@@ -923,6 +920,7 @@ initPage('admin').then(me => {
     document.title = 'เกี่ยวกับโปรแกรม'; return;
   }
   setupAdminNavigation();
+  if (adminSection === 'audit') AuditView.mount({ onAccount: loadAuthSummary });
   load().catch(e => {
     document.getElementById('adminLoadError').textContent = 'โหลดการตั้งค่าไม่สำเร็จ: ' + e.message + ' — กรุณาเปิดหน้าใหม่';
   });

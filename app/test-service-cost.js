@@ -128,7 +128,7 @@ try{
   const migration=fs.mkdtempSync(path.join(os.tmpdir(),'clinic-service-migration-'));
   try{
    const run=source=>{const r=spawnSync(process.execPath,['--no-warnings','-e',source],{cwd:__dirname,env:{...process.env,CLINIC_DATA_DIR:migration},encoding:'utf8'});assert.equal(r.status,0,r.stderr);};
-   run(`const {db}=require('./lib/db');db.exec("INSERT INTO services(name,price) VALUES('legacy',300); ALTER TABLE drugs DROP COLUMN default_dose_json; ALTER TABLE services DROP COLUMN cost; PRAGMA user_version=15");db.close();`);
+   run(`const {db}=require('./lib/db');db.exec("DROP TABLE audit_changes; DELETE FROM settings WHERE key='audit_changes_since'; INSERT INTO services(name,price) VALUES('legacy',300); ALTER TABLE drugs DROP COLUMN default_dose_json; ALTER TABLE services DROP COLUMN cost; PRAGMA user_version=15");db.close();`);
    run(`const assert=require('node:assert/strict');const {db}=require('./lib/db');assert.equal(db.prepare('PRAGMA user_version').get().user_version,require('./lib/schema-version').SCHEMA_VERSION);assert.equal(db.prepare('SELECT cost FROM services').get().cost,null);db.close();`);
   }finally{fs.rmSync(migration,{recursive:true,force:true});}
  });

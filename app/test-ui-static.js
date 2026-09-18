@@ -617,6 +617,7 @@ test('health แยกหลักฐาน cloud folder จาก external แ�
       if (name === './db') return { DATA_DIR: 'synthetic-only', getSetting: key => key === 'recovery_kit_fingerprint' ? 'synthetic-fingerprint' : stamp };
       if (name === './backup') return { status: () => status };
       if (name === './password-recovery') return { localStatus: () => ({ ready: false }) };
+      if (name === './audit') return {};
       if (['./recovery-core', './recovery-discovery', './recovery-kit'].includes(name)) return {};
       throw new Error('Unexpected module: ' + name);
     },
@@ -732,6 +733,23 @@ test('opening a new dialog clears prior transient successes without clearing err
   const body=common.slice(common.indexOf('function openModal('),common.indexOf('function closeModal('));
   assert.match(body,/querySelectorAll\('#toast \.m:not\(\.err\)'\)\.forEach\(message => message.remove\(\)\)/);
   assert.doesNotMatch(body,/printFallbacks|finishResult|retryFinish|\.err'\)/);
+});
+test('audit view is admin-only, text-safe, read-only and replaces larger result sets', () => {
+  const admin=sources.find(s=>s.name==='admin.html').text,view=sources.find(s=>s.name==='audit-view.js').text;
+  const init=admin.slice(admin.indexOf("initPage('admin').then"));
+  assert(init.indexOf("me.role !== 'admin'") < init.indexOf('AuditView.mount'));
+  assert.match(init,/if \(adminSection === 'audit'\) AuditView.mount/);
+  assert.doesNotMatch(view,/innerHTML|insertAdjacentHTML|JSON.stringify|api\('(?:POST|PATCH|DELETE)'/);
+  assert.match(view,/result.replaceChildren\(\.\.\.sections\)/);
+  assert.match(view,/generation !== requestNumber/);
+  assert.match(view,/state.limit \+ 50/);
+  assert.match(view,/slice\(0, 3\)/);
+  assert.match(view,/params.set\('important', state.important \? '1' : '0'\)/);
+  assert.match(view,/write_failures_since_boot/);
+  const auditCss=fs.readFileSync(path.join(publicDir,'audit-view.css'),'utf8');
+  assert.match(auditCss,/min-height: 44px/);assert.match(auditCss,/:focus-visible/);
+  assert.match(admin,/id="auditError"[^>]*role="alert"/);
+  assert.match(admin,/id="auditIncludeRoutine"/);
 });
 if (process.exitCode) process.exit(process.exitCode);
 console.log(`

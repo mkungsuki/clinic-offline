@@ -3,6 +3,7 @@
 // การขยับ stock ทุกกรณีผ่าน move() เท่านั้น (plan §1)
 const { db, txn, now, round2 } = require('./db');
 const DoseTemplate = require('../public/dose-template');
+const audit = require('./audit');
 
 function err(msg, status = 400) { return Object.assign(new Error(msg), { status }); }
 
@@ -74,29 +75,39 @@ function normalizeWarnDays(value) {
 
 // ---- drug_lots: ชั้นข้อมูลวันหมดอายุรายลอต — ไม่แตะยอดสต็อก (ยอดเป็นเรื่องของ stock_movements เท่านั้น) ----
 function addLot(drugId, { expiry_date, lot_label, qty, userId }) {
+  return txn(() => {
   const d = db.prepare('SELECT id FROM drugs WHERE id = ?').get(drugId);
   if (!d) throw err(`ไม่พบยา id ${drugId}`, 404);
   const r = db.prepare(`INSERT INTO drug_lots (drug_id, expiry_date, lot_label, qty_received, received_at, received_by)
     VALUES (?, ?, ?, ?, ?, ?)`)
     .run(drugId, normalizeExpiry(expiry_date), String(lot_label || '').trim() || null,
       qty == null || qty === '' ? null : Number(qty), now(), userId || null);
-  return Number(r.lastInsertRowid);
+  const id = Number(r.lastInsertRowid);
+  audit.record({category:'lot',action:'create',entityId:id,ref:String(drugId),after:db.prepare('SELECT * FROM drug_lots WHERE id=?').get(id),actorId:userId});
+  return id;
+  });
 }
 // ปิด lot (หมด/เก็บออกจากตู้แล้ว) — ห้ามลบแถว: cleared_* คือประวัติว่าใครปิดเมื่อไหร่
 function clearLot(lotId, { reason, userId }) {
-  const lot = db.prepare('SELECT id, cleared_at FROM drug_lots WHERE id = ?').get(lotId);
+  return txn(() => {
+  const lot = db.prepare('SELECT * FROM drug_lots WHERE id = ?').get(lotId);
   if (!lot) throw err('ไม่พบ lot นี้', 404);
   if (lot.cleared_at) throw err('lot นี้ถูกปิดไปแล้ว', 409);
   db.prepare('UPDATE drug_lots SET cleared_at = ?, cleared_by = ?, cleared_reason = ? WHERE id = ?')
     .run(now(), userId || null, String(reason || '').trim() || null, lotId);
+  audit.record({category:'lot',action:'suspend',entityId:lotId,ref:String(lot.drug_id),before:lot,after:db.prepare('SELECT * FROM drug_lots WHERE id=?').get(lotId),reason,actorId:userId});
+  });
 }
 // แก้ lot ที่คีย์ผิด (วัน/ชื่อ lot) — แก้ได้เฉพาะ lot ที่ยังไม่ปิด
 function updateLot(lotId, { expiry_date, lot_label }) {
-  const lot = db.prepare('SELECT id, cleared_at FROM drug_lots WHERE id = ?').get(lotId);
+  return txn(() => {
+  const lot = db.prepare('SELECT * FROM drug_lots WHERE id = ?').get(lotId);
   if (!lot) throw err('ไม่พบ lot นี้', 404);
   if (lot.cleared_at) throw err('lot นี้ถูกปิดไปแล้ว — แก้ไม่ได้', 409);
   db.prepare('UPDATE drug_lots SET expiry_date = ?, lot_label = ? WHERE id = ?')
     .run(normalizeExpiry(expiry_date), String(lot_label || '').trim() || null, lotId);
+  audit.record({category:'lot',entityId:lotId,ref:String(lot.drug_id),before:lot,after:db.prepare('SELECT * FROM drug_lots WHERE id=?').get(lotId)});
+  });
 }
 function listLots(drugId, includeCleared = false) {
   return db.prepare(`SELECT l.*, u.display_name AS received_by_name, c.display_name AS cleared_by_name
@@ -106,6 +117,7 @@ function listLots(drugId, includeCleared = false) {
 }
 
 function upsertDrug(data, id = null) {
+  return txn(() => {
   if (!data || typeof data.name !== 'string' || !data.name.trim()) throw err('ใส่ชื่อยา');
   const previous = id ? db.prepare('SELECT * FROM drugs WHERE id=?').get(id) : null;
   if (id && !previous) throw err('ไม่พบรายการยา', 404);
@@ -129,24 +141,37 @@ function upsertDrug(data, id = null) {
     db.prepare(`UPDATE drugs SET code = ?, name = ?, generic_name = ?, unit = ?, price = ?, cost = ?, reorder_level = ?,
       default_instructions = ?, dose_mode = ?, active = ?, default_dose_json = ?${hasWarn ? ', expiry_warn_days = ?' : ''} WHERE id = ?`)
       .run(...vals, defaultJson, ...(hasWarn ? [warnDays] : []), id);
+    audit.record({category:'drug',entityId:id,ref:String(id),before:previous,after:db.prepare('SELECT * FROM drugs WHERE id=?').get(id)});
     return id;
   }
   const r = db.prepare(`INSERT INTO drugs (code, name, generic_name, unit, price, cost, reorder_level, default_instructions, dose_mode, active, expiry_warn_days, default_dose_json)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(...vals, warnDays, defaultJson);
-  return Number(r.lastInsertRowid);
+  const created = Number(r.lastInsertRowid);
+  audit.record({category:'drug',action:'create',entityId:created,ref:String(created),after:db.prepare('SELECT * FROM drugs WHERE id=?').get(created)});
+  return created;
+  });
 }
 
 // อัปเดตทุนล่าสุด (ใช้ตอนรับยาเข้า ราคาทุนรอบใหม่)
 function setCost(drugId, cost) {
+  return txn(() => {
+  const before = db.prepare('SELECT cost FROM drugs WHERE id=?').get(drugId);
   db.prepare('UPDATE drugs SET cost = ? WHERE id = ?').run(round2(Number(cost) || 0), drugId);
+  if (before) audit.record({category:'drug',entityId:drugId,ref:String(drugId),before,after:db.prepare('SELECT cost FROM drugs WHERE id=?').get(drugId)});
+  });
 }
 
 // อัปเดตเกณฑ์เตือนรายยา (ใช้ตอนรับยาเข้า — จังหวะที่หมอนึกถึงรอบสั่งของ supplier เจ้านั้นพอดี)
 function setExpiryWarnDays(drugId, days) {
+  return txn(() => {
+  const before = db.prepare('SELECT expiry_warn_days FROM drugs WHERE id=?').get(drugId);
   db.prepare('UPDATE drugs SET expiry_warn_days = ? WHERE id = ?').run(normalizeWarnDays(days), drugId);
+  if (before) audit.record({category:'drug',entityId:drugId,ref:String(drugId),before,after:db.prepare('SELECT expiry_warn_days FROM drugs WHERE id=?').get(drugId)});
+  });
 }
 
 function upsertService(data, id = null) {
+  return txn(() => {
   const old = id == null ? null : db.prepare('SELECT * FROM services WHERE id = ?').get(id);
   if (id != null && !old) throw err('ไม่พบรายการค่าบริการนี้', 404);
   const name = String(data.name ?? old?.name ?? '').trim();
@@ -164,9 +189,16 @@ function upsertService(data, id = null) {
   const cost = money(data.cost === undefined ? old?.cost : data.cost, 'ต้นทุนต่อครั้ง', true);
   const active = data.active === undefined ? old?.active ?? 1 : data.active === 0 || data.active === false ? 0 : 1;
   const vals = [name, price, cost, active];
-  if (id != null) { db.prepare('UPDATE services SET name = ?, price = ?, cost = ?, active = ? WHERE id = ?').run(...vals, id); return id; }
+  if (id != null) {
+    db.prepare('UPDATE services SET name = ?, price = ?, cost = ?, active = ? WHERE id = ?').run(...vals, id);
+    audit.record({category:'service',entityId:id,ref:String(id),before:old,after:db.prepare('SELECT * FROM services WHERE id=?').get(id)});
+    return id;
+  }
   const r = db.prepare('INSERT INTO services (name, price, cost, active) VALUES (?, ?, ?, ?)').run(...vals);
-  return Number(r.lastInsertRowid);
+  const created = Number(r.lastInsertRowid);
+  audit.record({category:'service',action:'create',entityId:created,ref:String(created),after:db.prepare('SELECT * FROM services WHERE id=?').get(created)});
+  return created;
+  });
 }
 
 function movements(drugId, limit = 100) {

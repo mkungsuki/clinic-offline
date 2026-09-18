@@ -1,6 +1,6 @@
 {
   "name": "clinic-offline",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "license": "AGPL-3.0-only",
   "repository": "https://github.com/mkungsuki/clinic-offline",
   "description": "ระบบบริหารคลินิกแบบ offline 2 เครื่อง — zero dependency (node:http + node:sqlite)",
@@ -10,7 +10,7 @@
     "seed": "node --no-warnings seed.js",
     "seed:demo": "node --no-warnings seed.js --demo",
     "seed:mock": "node --no-warnings seed-mock.js",
-    "test": "node --no-warnings test-admin-navigation.js && node --no-warnings test-regression.js && node --no-warnings test-auth-lifecycle.js && node --no-warnings test-appointments.js && node --no-warnings test-multi-doctor.js && node --no-warnings test-queue-notices.js && node --no-warnings test-queue-input.js && node --no-warnings test-solo-doctor.js && node --no-warnings test-service-cost.js && node --no-warnings test-trial-seed-costs.js && node --no-warnings test-trial-lots.js && node --no-warnings test-trial-dose-defaults.js && node --no-warnings test-vitals-display.js && node --no-warnings test-dispensing-dose-units.js && node --no-warnings test-dose-unit-ui.js && node --no-warnings test-dose-defaults.js && node --no-warnings test-drug-report.js && node --no-warnings test-medication-sheet.js && node --no-warnings test-drug-labels.js && node --no-warnings test-recovery.js && node --no-warnings test-password-recovery.js && node --no-warnings test-ui-static.js && node --no-warnings test-publish-public.js && node --no-warnings test-triggers.js && node --no-warnings test-console-encoding.js && node --no-warnings test-owner-release.js",
+    "test": "node --no-warnings test-audit-changes.js && node --no-warnings test-audit-query.js && node --no-warnings test-audit-restore-status.js && node --no-warnings test-audit-ui.js && node --no-warnings test-admin-navigation.js && node --no-warnings test-regression.js && node --no-warnings test-auth-lifecycle.js && node --no-warnings test-appointments.js && node --no-warnings test-multi-doctor.js && node --no-warnings test-queue-notices.js && node --no-warnings test-queue-input.js && node --no-warnings test-solo-doctor.js && node --no-warnings test-service-cost.js && node --no-warnings test-trial-seed-costs.js && node --no-warnings test-trial-lots.js && node --no-warnings test-trial-dose-defaults.js && node --no-warnings test-vitals-display.js && node --no-warnings test-dispensing-dose-units.js && node --no-warnings test-dose-unit-ui.js && node --no-warnings test-dose-defaults.js && node --no-warnings test-drug-report.js && node --no-warnings test-medication-sheet.js && node --no-warnings test-drug-labels.js && node --no-warnings test-recovery.js && node --no-warnings test-password-recovery.js && node --no-warnings test-ui-static.js && node --no-warnings test-publish-public.js && node --no-warnings test-triggers.js && node --no-warnings test-console-encoding.js && node --no-warnings test-owner-release.js",
     "test:http": "node --no-warnings test-http.js",
     "test:browser": "node --no-warnings test-browser.js",
     "test:updater": "node --no-warnings test-updater.js",

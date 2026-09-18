@@ -25,6 +25,24 @@ async function test(name, fn) { await fn(); passed++; console.log('PASS admin: '
     assert.equal(context.location.href, expected);
   });
   const common = read('common.js');
+  for (const role of ['doctor', 'front']) await test('audit URL keeps ' + role + ' on About without audit request', async () => {
+    let ready; let mounted = 0; const visible = new Set();
+    const ctx = vm.createContext({
+      initPage: () => ({then(fn) { ready = fn; }}),
+      document: {getElementById: id => ({textContent:'',classList:{remove: name => visible.add(id + ':' + name)}})},
+      AuditView: {mount() { mounted++; }},
+      localStorage: {getItem:()=>null,removeItem(){}},
+    });
+    vm.runInContext(inline(read('admin.html')), ctx);
+    ready({role,app_version:'synthetic'});
+    assert.equal(mounted,0);assert(visible.has('aboutCard:hidden'));
+    assert.equal(ctx.document.title,'เกี่ยวกับโปรแกรม');
+  });
+  await test('audit is a first-class category with direct account link', () => {
+    const ctx=vm.createContext({});vm.runInContext(read('admin-navigation.js'),ctx);
+    assert.equal(vm.runInContext('ADMIN_SECTIONS.audit',ctx),'ประวัติการทำรายการ');
+    assert.match(read('admin.html'),/href="\/admin.html\?section=audit&amp;category=account"/);
+  });
   await test('missing/unknown selects retain defaults; empty text clears old content', () => {
     const ctx=vm.createContext({});vm.runInContext(read('admin-navigation.js'),ctx);
     ctx.el={tagName:'SELECT',options:[{value:'0'},{value:'1'}],value:'0'};

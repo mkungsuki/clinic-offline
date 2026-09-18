@@ -5,7 +5,7 @@
 const ADMIN_SECTIONS = {
   clinic: 'ข้อมูลคลินิก', printing: 'เอกสารและการพิมพ์', users: 'ผู้ใช้งาน',
   connections: 'เชื่อมต่อเครื่องอื่น', backup: 'สำรองและกู้ข้อมูล',
-  system: 'อัปเดตและเกี่ยวกับโปรแกรม', advanced: 'เครื่องมือขั้นสูง',
+  audit: 'ประวัติการทำรายการ', system: 'อัปเดตและเกี่ยวกับโปรแกรม', advanced: 'เครื่องมือขั้นสูง',
 };
 let adminSection = 'clinic';
 let adminReady = false;

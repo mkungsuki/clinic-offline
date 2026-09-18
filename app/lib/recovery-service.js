@@ -2,7 +2,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { DATA_DIR, getSetting, setSetting, now } = require('./db');
+const { DATA_DIR, getSetting, setSetting, now, txn } = require('./db');
+const audit = require('./audit');
 const backup = require('./backup');
 const core = require('./recovery-core');
 const discovery = require('./recovery-discovery');
@@ -108,11 +109,12 @@ function hasRecoveryKit(driveRoot) {
 }
 
 function configureDestinations(body) {
+  const changes = {};
   if (body.cloudId) {
     const selected = resolveCloud(String(body.cloudId));
     if (!selected) throw new Error('ไม่พบ Google Drive/OneDrive ที่เลือก กรุณาค้นหาใหม่');
     fs.mkdirSync(selected.technicianPath, { recursive: true });
-    setSetting('backup_cloud_dest', selected.technicianPath);
+    changes.backup_cloud_dest = selected.technicianPath;
   }
   if (body.externalId) {
     const selected = resolveExternal(String(body.externalId));
@@ -123,8 +125,13 @@ function configureDestinations(body) {
     }
     const destination = path.join(selected.technicianPath, 'Clinic Backup');
     fs.mkdirSync(destination, { recursive: true });
-    setSetting('backup_dest_1', destination);
+    changes.backup_dest_1 = destination;
   }
+  txn(() => {
+    const before = Object.fromEntries(Object.keys(changes).map(k => [k,getSetting(k,'')]));
+    for (const [key,value] of Object.entries(changes)) setSetting(key,value);
+    audit.record({category:'settings',entityId:'backup',ref:'backup',before,after:changes});
+  });
   return { ok: true, options: setupOptions() };
 }
 

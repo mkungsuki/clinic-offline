@@ -8,6 +8,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { db, now, txn, getSetting, setSetting, DATA_DIR } = require('./db');
+const audit = require('./audit');
 
 const IDLE_LOCK_MS = Number(process.env.CLINIC_IDLE_LOCK_MS) || 10 * 60 * 1000; // test override ได้
 const sessions = new Map(); // sid -> { userId, role, displayName, lastActivity, locked, createdAt }
@@ -131,7 +132,8 @@ function updateUser(id, body) {
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
     if (!user) throw Object.assign(new Error('ไม่พบผู้ใช้งาน'), { status: 404 });
     if ('front_desk' in body && (user.role !== 'doctor' || ![true,false].includes(body.front_desk))) bad('เลือกสิทธิ์ทำงานหน้าร้านได้เฉพาะบัญชีแพทย์');
-    const frontChanged = 'front_desk' in body && body.front_desk !== canFrontDesk(user);
+    const beforeFront = canFrontDesk(user);
+    const frontChanged = 'front_desk' in body && body.front_desk !== beforeFront;
     if (frontChanged) setSetting('doctor_front_' + id, body.front_desk ? '1' : '0');
     const fields = {}, values = [];
     // Repeating the same successful change after a lost response is a no-op.
@@ -147,6 +149,11 @@ function updateUser(id, body) {
     }
     if (body.password && user.username === 'admin') setSetting('setup_required', '0');
     if (revoked) setSetting('auth_revision_' + id, String(sessionRevision(id) + 1));
+    const after = db.prepare('SELECT * FROM users WHERE id=?').get(id);
+    const action = 'active' in fields ? (after.active ? 'reactivate' : 'suspend') : frontChanged ? 'permission' : ('pass_hash' in fields || 'pin_hash' in fields) ? 'secret_changed' : 'update';
+    audit.record({category:'user',action,entityId:id,ref:user.username,
+      before:{...user,front_desk:beforeFront,password_changed:false,pin_changed:false},
+      after:{...after,front_desk:canFrontDesk(after),password_changed:'pass_hash' in fields,pin_changed:'pin_hash' in fields}});
     return { ok: true, sessions_revoked: revoked };
   });
 }
@@ -175,10 +182,15 @@ function createUser({ username, displayName, displayNameEn, role, password, pin,
   if (!['doctor', 'front', 'admin'].includes(role)) throw Object.assign(new Error('บทบาทไม่ถูกต้อง'), { status: 400 });
   if (String(password || '').length < 8) throw Object.assign(new Error('รหัสผ่านต้องยาวอย่างน้อย 8 ตัวอักษร'), { status: 400 });
   if (pin && !/^\d{4,6}$/.test(String(pin))) throw Object.assign(new Error('PIN ต้องเป็นตัวเลข 4-6 หลัก'), { status: 400 });
-  return db.prepare(`INSERT INTO users (username, display_name, display_name_en, role, pass_hash, pin_hash, active, created_at, medical_license, specialty)
+  return txn(() => {
+  const result = db.prepare(`INSERT INTO users (username, display_name, display_name_en, role, pass_hash, pin_hash, active, created_at, medical_license, specialty)
     VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`) 
     .run(String(username).trim(), displayName, displayNameEn || null, role, hashSecret(password), pin ? hashSecret(pin) : null, now(),
       medicalLicense || null, specialty || null);
+  const id = Number(result.lastInsertRowid);
+  audit.record({category:'user',action:'create',entityId:id,ref:String(username).trim(),after:db.prepare('SELECT * FROM users WHERE id=?').get(id),actorId:createdBy});
+  return result;
+  });
 }
 
 module.exports = {
