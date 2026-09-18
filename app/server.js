@@ -6,6 +6,8 @@ if(require('./lib/trial-start-guard')(__dirname))process.exit(12);
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+try { require('./lib/trial-uninstall-entry').ensure(path.resolve(__dirname, '..')); }
+catch { console.error('สร้างทางลัดถอนชุดทดลองไม่ได้ ยังใช้ปุ่มจัดการชุดทดลองในโปรแกรมได้'); }
 const crypto = require('node:crypto');
 
 // log ถาวร + crash handler ต้องติดก่อน require ตัวอื่นทั้งหมด — lib/db โยน SCHEMA_TOO_NEW ตอน require ได้

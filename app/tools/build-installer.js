@@ -806,6 +806,8 @@ function makeReadmeTxt(variant) { return [
     '  - ใช้บัญชี doctor / doctor123 สำหรับจอหมอ',
     '  - ใช้บัญชี front / front123 สำหรับจอหน้าร้าน',
     '  - เปิดครั้งต่อไป: ดับเบิลคลิกไอคอน "ระบบคลินิก (ทดลอง)" บนหน้าจอ',
+    '  - เลิกใช้เดโมก่อนลงตัวจริง: เปิด C:\\clinic-trial แล้วดับเบิลคลิก ถอนชุดทดลอง.cmd รอหน้าต่างแจ้งว่าถอนเรียบร้อย จึงเปิดตัวติดตั้งชุดจริง',
+    '  - หากถอนไม่เสร็จ ให้กด ลองอีกครั้ง ในหน้าต่างตัวถอน ไม่ต้องลบโฟลเดอร์เอง ข้อมูลฝึกไม่ย้ายไปตัวจริง',
     '  - ถ้าจะทดลองสองเครื่อง (ทำทีหลังได้ทุกเมื่อ): ที่เครื่องหน้าร้าน เข้าระบบด้วย admin → หน้า "ตั้งค่า"',
     '    → การ์ด "เครื่องห้องตรวจ" → กด "ตั้งค่าเครื่องห้องตรวจ" (หรือไอคอน "ตั้งค่าเครื่องห้องตรวจ (ทดลอง)" บน Desktop)',
     '    ทำตามกล่องจนขึ้น "สำเร็จ" → นำโฟลเดอร์ "ส่งไปเครื่องหมอ (ทดลอง)" บน Desktop ไปที่เครื่องหมอ — เครื่องหมอไม่ต้องติดตั้งโปรแกรม',
@@ -921,7 +923,8 @@ function buildInstaller(options = {}) {
   write('ติดตั้งระบบคลินิก.cmd', makeInstallerCmd(variant));
   write('เปิดระบบคลินิก.cmd', makeLauncherCmd(variant));
   write('รีสตาร์ทระบบคลินิก.cmd', makeRestartCmd(variant));
-  write('อ่านก่อนติดตั้ง.txt', makeReadmeTxt(variant));
+  if (variant.trial) write(require('../lib/trial-uninstall-entry').filename, require('../lib/trial-uninstall-entry').content());
+  write('อ่านก่อนติดตั้ง.txt', makeReadmeTxt(variant) + (variant.trial ? '\r\nถอนชุดทดลอง: เปิด ถอนชุดทดลอง.cmd ในโฟลเดอร์ชุดทดลอง หรือใช้ปุ่มจัดการชุดทดลองในโปรแกรม แล้วรอหน้าต่างแจ้งเสร็จ หากติดขัดให้กด ลองอีกครั้ง ในหน้าต่างเดิม\r\n' : ''));
   fs.mkdirSync(path.join(packageRoot, 'scripts'));
   write(path.join('scripts', 'make-shortcuts.ps1'), makeShortcutsPs1(variant));
   // ทั้งสองชุดมีตัวช่วยสองเครื่องแบบ HTTPS (production เดิมห้ามมี LAN helper เพราะเป็น HTTP — ยกเลิกแล้วตาม A-refined)

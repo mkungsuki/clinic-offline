@@ -46,6 +46,6 @@ async function launch(root,action,id){
  }
  if(!fs.existsSync(ready))throw fail('ยังยืนยันการเปิดตัวช่วยไม่ได้ ตรวจกล่อง Windows หรือเปิด ทำต่อ.cmd ในโฟลเดอร์ผล: '+dir);
  fs.unlinkSync(ready);
- return {started:true,operation:id,message:'ตรวจกล่องยืนยันบนเครื่องนี้ เมื่อเสร็จจะมีกล่องแจ้งผล หากงานค้างให้เปิด ทำต่อ.cmd ในโฟลเดอร์ผลเดิม',resultFolder:dir};
+ return {started:true,operation:id,message:'ตรวจกล่องยืนยันบนเครื่องนี้ แล้วรอหน้าต่างแสดงสถานะจนแจ้งเสร็จ หากติดขัดให้กด ลองอีกครั้ง ในหน้าต่างนั้น ไม่ต้องกดถอนซ้ำจากเว็บ หากปิดหน้าต่างไปแล้วใช้ ทำต่อ.cmd ในโฟลเดอร์ผลเดิมได้',resultFolder:dir};
 }
 module.exports={context,checkInstalled,status,launch};

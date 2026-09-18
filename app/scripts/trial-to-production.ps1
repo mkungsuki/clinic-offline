@@ -48,6 +48,34 @@ try {
  foreach($candidate in @($trial,$target)){$parent=$candidate;while($parent){if(Test-Path -LiteralPath $parent){if((Get-Item -LiteralPath $parent -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'unsafe-parent'}};$parent=Split-Path $parent -Parent}}
  if(Test-Path -LiteralPath $target){NoLinks $target}
  $stateFile=Join-Path $target 'logs\trial-removal.json'
+ # A folder/web uninstall may already have renamed the trial. Finish that exact
+ # operation before installing production; absence of C:\clinic-trial is not proof of removal.
+ $maintenanceDir=if($test){Join-Path $sandbox 'เครื่องมือ'}else{Join-Path $env:LOCALAPPDATA 'ClinicOffline\TrialMaintenance'}
+ $pendingMaintenance=$false
+ if(Test-Path -LiteralPath $maintenanceDir){
+  NoLinks $maintenanceDir
+  foreach($operation in Get-ChildItem -LiteralPath $maintenanceDir -Directory){
+   $requestPath=Join-Path $operation.FullName 'request.json';$journalPath=Join-Path $operation.FullName 'state.json'
+   if((Test-Path -LiteralPath $requestPath) -and (Test-Path -LiteralPath $journalPath)){
+    $request=Get-Content -LiteralPath $requestPath -Raw -Encoding UTF8|ConvertFrom-Json
+    $journal=Get-Content -LiteralPath $journalPath -Raw -Encoding UTF8|ConvertFrom-Json
+    if($request.root -eq $trial -and $journal.phase -notin @('new','cancelled','complete')){$pendingMaintenance=$true}
+   }
+  }
+ }
+ if($pendingMaintenance){
+  if(Test-Path -LiteralPath $stateFile){throw 'two-removal-journals'}
+  if($test){
+   [IO.File]::WriteAllText((Join-Path $sandbox 'trial-tools-test.marker'),'synthetic-trial-tools-only')
+   $env:CLINIC_TRIAL_TOOLS_TEST_ROOT=$sandbox;$env:CLINIC_TEST_INSTANCE_TOKEN='synthetic-transition-maintenance';$env:CLINIC_TRIAL_TOOLS_CONFIRM=$env:CLINIC_TRANSITION_TEST_CONFIRM
+  }
+  & (Join-Path $PSScriptRoot 'trial-uninstall.ps1') -TestMode:$test
+  if($LASTEXITCODE -ne 0){throw 'pending-uninstall-failed'}
+  if(Test-Path -LiteralPath $trial){throw 'trial-still-present'}
+  if(@(Get-ChildItem -LiteralPath (Split-Path $trial -Parent) -Directory -Filter 'clinic-trial-removing-*').Count){throw 'unowned-removal-pending'}
+  exit 0
+ }
+ if(-not (Test-Path -LiteralPath $stateFile) -and @(Get-ChildItem -LiteralPath (Split-Path $trial -Parent) -Directory -Filter 'clinic-trial-removing-*').Count){$safeMessage='ยังมีชุดทดลองที่ถอนค้างอยู่ กรุณาถอนชุดทดลองให้เสร็จก่อนติดตั้งตัวจริง';throw 'unowned-removal-pending'}
  if(-not (Test-Path -LiteralPath $trial) -and -not (Test-Path -LiteralPath $stateFile)){exit 0}
  $mutex=New-Object Threading.Mutex($false,('Local\ClinicTrialRemoval-'+[BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($trial))).Replace('-','')))
  $ownsMutex=$mutex.WaitOne(0)
@@ -56,7 +84,8 @@ try {
  if(Test-Path -LiteralPath $stateFile){
   $state=Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 | ConvertFrom-Json
   if($state.original -ne $trial -or (Split-Path $state.cleanup -Parent) -ne (Split-Path $trial -Parent) -or (Split-Path $state.cleanup -Leaf) -notmatch '^clinic-trial-removing-[0-9a-f]{32}$'){throw 'invalid-journal'}
-  if($state.phase -eq 'complete' -and -not (Test-Path -LiteralPath $trial)){exit 0}
+  foreach($leftover in Get-ChildItem -LiteralPath (Split-Path $trial -Parent) -Directory -Filter 'clinic-trial-removing-*'){if((Full $leftover.FullName) -ne (Full $state.cleanup)){throw 'unowned-removal-pending'}}
+  if($state.phase -eq 'complete' -and -not (Test-Path -LiteralPath $trial) -and -not (Test-Path -LiteralPath $state.cleanup)){exit 0}
   if((Test-Path -LiteralPath $trial) -and (Test-Path -LiteralPath $state.cleanup)){throw 'two-trial-directories'}
  }
  if(Test-Path -LiteralPath $trial){
@@ -78,8 +107,10 @@ try {
  SaveState 'confirmed'
  if(Test-Path -LiteralPath $trial){
   # Stop only processes using the dedicated runtime inside this verified trial installation.
-  $runtime=Full (Join-Path $trial 'runtime\node.exe')
-  $owned=@(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" | Where-Object {$_.ExecutablePath -and (Full $_.ExecutablePath) -eq $runtime} | Sort-Object @{Expression={if($_.CommandLine -match 'supervisor\.js'){0}else{1}}})
+  $runtimes=@((Full (Join-Path $trial 'runtime\node.exe')))
+  $vendor=Join-Path $trial 'app\vendor'
+  if(Test-Path -LiteralPath $vendor){$runtimes+=@(Get-ChildItem -LiteralPath $vendor -Filter 'node-v*-win-x64.exe' -File|ForEach-Object {$_.FullName})}
+  $owned=@(Get-CimInstance Win32_Process | Where-Object {$_.ExecutablePath -and $runtimes -contains (Full $_.ExecutablePath)} | Sort-Object @{Expression={if($_.CommandLine -match 'supervisor\.js'){0}else{1}}})
   foreach($process in $owned){Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue}
   foreach($process in $owned){Wait-Process -Id $process.ProcessId -Timeout 10 -ErrorAction SilentlyContinue}
   NoLinks $trial
@@ -91,8 +122,9 @@ try {
  if($test -and $env:CLINIC_TRANSITION_TEST_FAIL -eq 'after-rename'){throw 'injected-after-rename'}
  . (Join-Path $PSScriptRoot 'windows-shortcuts.ps1')
  foreach($folder in $shortcutFolders | Select-Object -Unique){if($folder -and (Test-Path -LiteralPath $folder)){
+  $parent=$folder;while($parent){$item=Get-Item -LiteralPath $parent -Force;if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -and -not [ClinicCloudTag]::IsCloud($parent)){throw 'unsafe-shortcut-parent'};$parent=Split-Path $parent -Parent}
   foreach($link in Get-ChildItem -LiteralPath $folder -Filter '*.lnk' -File){
-   if($link.Attributes -band [IO.FileAttributes]::ReparsePoint){continue}
+   if(($link.Attributes -band [IO.FileAttributes]::ReparsePoint) -and -not [ClinicCloudTag]::IsCloud($link.FullName)){continue}
    try{$destination=[ClinicUnicodeShortcut]::Target($link.FullName)}catch{continue} # unrelated broken links must not block removal
    if($destination -and ((Full $destination) -eq $trial -or (Full $destination).StartsWith($trial+'\',[StringComparison]::OrdinalIgnoreCase))){Remove-Item -LiteralPath $link.FullName -Force}
   }

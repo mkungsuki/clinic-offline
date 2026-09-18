@@ -29,6 +29,7 @@ module.exports=async function({tab,origins,viewport,cloudDir,evaluate,waitExpres
  }
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'clinic password browser ไทย -')),source=path.join(root,'downloaded'),data=path.join(root,'fresh/data'),token=crypto.randomUUID(),port=45000+crypto.randomInt(4000),base='http://127.0.0.1:'+port;
  fs.cpSync(cloudDir,source,{recursive:true});
+ assert(require('./lib/recovery-discovery').hasBackupManifest(source),'copied browser fixture must contain a backup manifest; files='+fs.readdirSync(source).filter(n=>n.includes('manifest')).join(','));
  const env={...process.env,CLINIC_DATA_DIR:data,CLINIC_PORT:String(port),CLINIC_HTTPS_PORT:'0',CLINIC_TEST_INSTANCE_TOKEN:token};let helper,output='';const pause=ms=>new Promise(r=>setTimeout(r,ms));
  try{
   helper=spawn(process.execPath,['--no-warnings','recovery-assistant.js'],{cwd:__dirname,env,stdio:['ignore','pipe','pipe'],windowsHide:true});helper.stdout.on('data',b=>{output+=b.toString()});
@@ -36,7 +37,9 @@ module.exports=async function({tab,origins,viewport,cloudDir,evaluate,waitExpres
   const helperUrl=output.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];assert(helperUrl);
   await tab.send('Page.navigate',{url:helperUrl});await waitExpression(tab,"typeof statusData!=='undefined' && statusData",'standalone ready');
   await evaluate(tab,`document.querySelector('#sourcePath').closest('details').open=true;document.querySelector('#sourcePath').value=${JSON.stringify(source)};true`,true);
-  await clickControl(tab,'#addSourceBtn');await waitExpression(tab,"!document.querySelector('#unlockCard').classList.contains('hidden')",'fresh machine asks for password');
+  await clickControl(tab,'#addSourceBtn');
+  try { await waitExpression(tab,"!document.querySelector('#unlockCard').classList.contains('hidden')",'fresh machine asks for password'); }
+  catch(error) { throw Error(error.message+'; visible result: '+await evaluate(tab,"document.querySelector('#sourceResult').textContent")); }
   assert(await evaluate(tab,"!statusData.kitAvailable && !statusData.keyAvailable"));
   await evaluate(tab,`document.querySelector('#backupPassword').value=${JSON.stringify(pass)};true`,true);await clickControl(tab,'#unlockBtn');
   await waitExpression(tab,"!!current && current.source.passwordUnlocked && !document.querySelector('#actual').classList.contains('hidden')",'password exposes actual restore',20000);

@@ -1,20 +1,26 @@
 ﻿param([switch]$TestMode)
 $ErrorActionPreference='Stop'
 $test=$TestMode -and $env:CLINIC_INSTALL_TEST -eq '1' -and $env:CLINIC_TEST_INSTANCE_TOKEN
+. (Join-Path $PSScriptRoot 'windows-shortcuts.ps1')
+$progress=$null;$progressLabel=$null
+function Progress([string]$text){if($test){return};if(-not $script:progress){$script:progress=New-Object Windows.Forms.Form;$script:progress.Text='จัดการชุดทดลอง';$script:progress.Width=580;$script:progress.Height=180;$script:progress.StartPosition='CenterScreen';$script:progress.ControlBox=$false;$script:progress.Font=New-Object Drawing.Font('Segoe UI',12);$script:progressLabel=New-Object Windows.Forms.Label;$script:progressLabel.Dock='Fill';$script:progressLabel.Padding=New-Object Windows.Forms.Padding(20);$script:progress.Controls.Add($script:progressLabel);$script:progress.Show()};$script:progressLabel.Text=$text;[Windows.Forms.Application]::DoEvents()}
+do {
+$retry=$false
 $mutex=$null;$owns=$false;$lockOwned=$false;$transcript=$false;$code=1
 function Full([string]$p){[IO.Path]::GetFullPath(($p -replace '"','').TrimEnd('\'))}
-function Parents([string]$p){while($p){if((Test-Path -LiteralPath $p) -and ((Get-Item -LiteralPath $p -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'linked-parent'};$p=Split-Path $p -Parent}}
-function NoLinks([string]$p){Parents $p;if(Test-Path -LiteralPath $p){$item=Get-Item -LiteralPath $p -Force;if($item.PSIsContainer){foreach($child in Get-ChildItem -LiteralPath $p -Force){NoLinks $child.FullName}}}}
+function Parents([string]$p,[switch]$AllowCloud){while($p){if((Test-Path -LiteralPath $p) -and ((Get-Item -LiteralPath $p -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){if(-not ($AllowCloud -and [ClinicCloudTag]::IsCloud($p))){throw 'linked-parent'}};$p=Split-Path $p -Parent}}
+function NoLinks([string]$p,[switch]$AllowCloud){if($progress){[Windows.Forms.Application]::DoEvents()};Parents $p -AllowCloud:$AllowCloud;if(Test-Path -LiteralPath $p){$item=Get-Item -LiteralPath $p -Force;if($item.PSIsContainer){foreach($child in Get-ChildItem -LiteralPath $p -Force){NoLinks $child.FullName -AllowCloud:$AllowCloud}}}}
 function Save([string]$phase){$state.phase=$phase;[IO.File]::WriteAllText($stateFile+'.new',($state|ConvertTo-Json -Compress),(New-Object Text.UTF8Encoding($false)));Move-Item -LiteralPath ($stateFile+'.new') -Destination $stateFile -Force}
 function Tell([string]$message,[bool]$ok){
+ if($progress){$progress.Hide()}
  if($stateFile){$resultPath=Join-Path $PSScriptRoot 'ผลการจัดการ.txt';Parents $resultPath;[IO.File]::WriteAllText($resultPath,$message,(New-Object Text.UTF8Encoding($true)))}
  if($test){Write-Output $(if($ok){'TRIAL OK'}else{'TRIAL STOP'});return}
  [Windows.Forms.MessageBox]::Show($message,'จัดการชุดทดลอง','OK',$(if($ok){'Information'}else{'Warning'}))|Out-Null
 }
 function Fault([string]$phase){if($test -and $env:CLINIC_TRIAL_TOOLS_FAIL -eq $phase){throw 'synthetic-failure'};if($test -and $env:CLINIC_TRIAL_TOOLS_KILL -eq $phase){Stop-Process -Id $PID -Force}}
-function DeleteScoped([string]$p,[string]$parent,[string]$leaf){
+function DeleteScoped([string]$p,[string]$parent,[string]$leaf,[switch]$AllowCloud){
  $p=Full $p;if((Split-Path $p -Parent) -ne (Full $parent) -or (Split-Path $p -Leaf) -ne $leaf){throw 'unsafe-delete'}
- NoLinks $p;if(Test-Path -LiteralPath $p){Remove-Item -LiteralPath $p -Recurse -Force}
+ NoLinks $p -AllowCloud:$AllowCloud;if(Test-Path -LiteralPath $p){Remove-Item -LiteralPath $p -Recurse -Force}
 }
 function Installed([string]$p){
  NoLinks $p
@@ -87,6 +93,7 @@ try {
   if(Test-Path -LiteralPath $cer){$publicCert=New-Object Security.Cryptography.X509Certificates.X509Certificate2($cer);$state.certThumbprint=$publicCert.Thumbprint;$publicCert.Dispose()}
   Save 'confirmed'
  }
+ Progress 'กำลังเตรียมจัดการชุดทดลอง กรุณารอจนมีข้อความแจ้งผล'
  $lock=Join-Path $root 'update\apply.lock'
  if(Test-Path -LiteralPath $root){
   if(Test-Path -LiteralPath $lock){$holder=Get-Content -LiteralPath $lock -Raw|ConvertFrom-Json;if(Get-Process -Id $holder.pid -ErrorAction SilentlyContinue){throw 'update-running'};Remove-Item -LiteralPath $lock -Force}
@@ -129,12 +136,13 @@ try {
   Tell "เริ่มฝึกใหม่เรียบร้อยแล้ว ให้ปิดแท็บเก่าและเปิดระบบคลินิก (ทดลอง) อีกครั้ง`nผู้ดูแล: admin / admin1234`nหมอ: doctor / doctor123`nหน้าร้าน: front / front123`n`nข้อมูลฝึกและการตั้งค่าเดิมในชุดทดลองถูกลบแล้ว" $true
  }else{
   if(Test-Path -LiteralPath $root){StopTrial;NoLinks $root;Move-Item -LiteralPath $root -Destination $old}
+  Progress 'กำลังถอนชุดทดลอง: ลบทางลัดและการเชื่อมต่อ'
   Save 'deleting';Fault 'after-rename'
   . (Join-Path $dir 'windows-shortcuts.ps1')
   foreach($folder in $shortcutFolders|Select-Object -Unique){if($folder -and (Test-Path -LiteralPath $folder)){
-   Parents $folder
+   Parents $folder -AllowCloud
    foreach($link in Get-ChildItem -LiteralPath $folder -Filter '*.lnk' -File){
-    if($link.Attributes -band [IO.FileAttributes]::ReparsePoint){continue}
+    if(($link.Attributes -band [IO.FileAttributes]::ReparsePoint) -and -not [ClinicCloudTag]::IsCloud($link.FullName)){continue}
     try{$destination=[ClinicUnicodeShortcut]::Target($link.FullName)}catch{continue}
     if($destination -and ((Full $destination) -eq $root -or (Full $destination).StartsWith($root+'\',[StringComparison]::OrdinalIgnoreCase))){Remove-Item -LiteralPath $link.FullName -Force}
    }
@@ -145,12 +153,12 @@ try {
    $doctorFolder=Join-Path $desktop 'ส่งไปเครื่องหมอ (ทดลอง)'
    $doctorCer=Join-Path $doctorFolder 'clinic.cer'
    if(Test-Path -LiteralPath $doctorCer){
-    NoLinks $doctorFolder
+    NoLinks $doctorFolder -AllowCloud
     $allowed=@('clinic.cer','ติดตั้งใบรับรอง (เครื่องห้องตรวจ).cmd','เปิดระบบคลินิก (ห้องหมอ ทดลอง).url','อ่านก่อนเปิด.txt')
     $files=@(Get-ChildItem -LiteralPath $doctorFolder -Force)
     $publicDoctorCert=New-Object Security.Cryptography.X509Certificates.X509Certificate2($doctorCer)
     $same=$publicDoctorCert.Thumbprint -eq $state.certThumbprint;$publicDoctorCert.Dispose()
-    if($same -and @($files|Where-Object {$_.PSIsContainer -or $_.Name -notin $allowed}).Count -eq 0){DeleteScoped $doctorFolder $desktop 'ส่งไปเครื่องหมอ (ทดลอง)'}
+    if($same -and @($files|Where-Object {$_.PSIsContainer -or $_.Name -notin $allowed}).Count -eq 0){DeleteScoped $doctorFolder $desktop 'ส่งไปเครื่องหมอ (ทดลอง)' -AllowCloud}
    }
   }}
   if(-not $test){
@@ -158,19 +166,29 @@ try {
    # Thumbprint was obtained from the public .cer only. Never open the private PFX/key.
    if($state.certThumbprint -match '^[0-9A-F]{40}$'){foreach($store in @('Cert:\CurrentUser\Root','Cert:\LocalMachine\Root')){$certPath=Join-Path $store $state.certThumbprint;if(Test-Path -LiteralPath $certPath){Remove-Item -LiteralPath $certPath -Force}}}
   }
+  Progress 'กำลังลบโปรแกรมทดลองและข้อมูลฝึก กรุณารอจนมีข้อความแจ้งผล'
   DeleteScoped $old (Split-Path $root -Parent) ('clinic-trial-removing-'+$id)
+  if((Test-Path -LiteralPath $old) -or (Test-Path -LiteralPath $root)){throw 'removal-incomplete'}
   Save 'cleaned';Fault 'after-delete'
   Save 'complete'
   Tell "ถอนโปรแกรมทดลองและข้อมูลในชุดทดลองทั้งหมดแล้ว ปิดแท็บทดลองเดิมได้เลย`n`nไฟล์ ZIP สำเนาโฟลเดอร์ส่งหมอที่ย้ายหรือเพิ่มไฟล์เอง และสำเนาที่เคยส่งออกไป USB/คลาวด์หรือเครื่องอื่นต้องลบแยกหากไม่ต้องการเก็บ`nระบบใช้งานจริงและโปรแกรมอื่นไม่ได้ถูกถอน" $true
  }
  $code=0
 }catch{
- Write-Output ('TRIAL FAILED phase='+$state.phase+' category='+$_.CategoryInfo.Category)
- Tell ('ยังทำไม่เสร็จ กรุณาอย่าเริ่มงานฝึกต่อ ให้เปิด ทำต่อ.cmd ในโฟลเดอร์นี้เพื่อต่องานเดิม: '+$PSScriptRoot+' หากยังทำไม่ได้ ให้ส่งไฟล์ การทำงาน.log ให้ผู้ดูแล') $false
- if(-not $test){Start-Process -FilePath explorer.exe -ArgumentList (([char]34)+$PSScriptRoot+([char]34)) -WindowStyle Hidden|Out-Null}
+ Write-Output ('TRIAL FAILED phase='+$state.phase+' category='+$_.CategoryInfo.Category+' type='+$_.Exception.GetType().Name)
+ if($progress){$progress.Hide()}
+ $message='ยังถอนหรือเริ่มฝึกใหม่ไม่เสร็จ กรุณาปิดหน้าต่างโฟลเดอร์ชุดทดลองและโปรแกรมที่เปิดไฟล์ในนั้น แล้วกด ลองอีกครั้ง'+"`n`nหากปิดหน้าต่างนี้ สามารถเปิดตัวถอนชุดทดลองเพื่อต่องานเดิมได้"
+ if($_.Exception.Message -in @('linked-parent','unsafe-delete','unsafe-root','not-trial','two-installs')){$message='ยังทำไม่เสร็จ เพราะตำแหน่งไฟล์ไม่ตรงกับชุดทดลองที่กำลังถอน ระบบหยุดเพื่อไม่ให้ลบผิดโฟลเดอร์ กรุณาให้ผู้ดูแลตรวจสอบก่อนลองอีกครั้ง'}
+ if($test){Tell $message $false;if($env:CLINIC_TRIAL_TOOLS_RETRY_ONCE -eq '1' -and -not $testRetried){$testRetried=$true;$retry=$true;$env:CLINIC_TRIAL_TOOLS_FAIL=''}}else{
+  [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'ผลการจัดการ.txt'),$message,(New-Object Text.UTF8Encoding($true)))
+  $retry=[Windows.Forms.MessageBox]::Show($message,'ยังทำไม่เสร็จ','RetryCancel','Warning') -eq 'Retry'
+ }
+
 }finally{
  if($lockOwned -and (Test-Path -LiteralPath $lock)){Remove-Item -LiteralPath $lock -Force -ErrorAction SilentlyContinue}
  if($transcript){Stop-Transcript|Out-Null}
+ if($progress){$progress.Dispose();$progress=$null}
  if($owns -and $mutex){$mutex.ReleaseMutex()};if($mutex){$mutex.Dispose()}
 }
+} while($retry)
 exit $code

@@ -23,3 +23,22 @@ public static class ClinicUnicodeShortcut {
 }
 '@
 }
+
+if (-not ('ClinicCloudTag' -as [type])) {
+ Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class ClinicCloudTag {
+ [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct Data {
+  public uint attributes; public System.Runtime.InteropServices.ComTypes.FILETIME creation,access,write;
+  public uint sizeHigh,sizeLow,tag,reserved;
+  [MarshalAs(UnmanagedType.ByValTStr,SizeConst=260)] public string name;
+  [MarshalAs(UnmanagedType.ByValTStr,SizeConst=14)] public string alternate;
+ }
+ [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr FindFirstFileW(string path,out Data data);
+ [DllImport("kernel32.dll")] static extern bool FindClose(IntPtr handle);
+ public static bool Allowed(uint tag) { return (tag & 0xFFFF0FFFu)==0x9000001Au; }
+ public static bool IsCloud(string path) { Data d; var h=FindFirstFileW(path,out d);if(h==new IntPtr(-1))return false;try{return Allowed(d.tag);}finally{FindClose(h);} }
+}
+'@
+}

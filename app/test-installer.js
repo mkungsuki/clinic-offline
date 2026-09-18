@@ -247,6 +247,9 @@ function runCmd(cmdFile, args, env) {
     assert(result.packages.every(p=>p.sourceDifferences===0));
   });
   test('build ชุดทดลองสำเร็จ ชื่อ ZIP/โฟลเดอร์/ทางเข้าแยกจากตัวจริง', () => {
+    const removalName=require('./lib/trial-uninstall-entry').filename;
+    assert.equal(fs.readFileSync(path.join(trialPackageRoot,removalName),'utf8'),require('./lib/trial-uninstall-entry').content());
+    assert(!fs.existsSync(path.join(packageRoot,removalName)),'ตัวจริงต้องไม่มีไฟล์ถอนเดโมที่ root');
     assert.equal(trialResult.ok, true);
     assert.equal(trialResult.trial, true);
     assert.equal(trialResult.packageName, TRIAL_PACKAGE_NAME);
